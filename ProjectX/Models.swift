@@ -320,3 +320,49 @@ struct TradeSearchResponse: Codable {
     let errorCode: Int
     let errorMessage: String?
 }
+
+
+// ── Realtime / SignalR Models ─────────────────
+
+struct Quote: Identifiable {
+    var id: String { symbol }
+    let symbol: String
+    let symbolName: String
+    let lastPrice: Double
+    let bestBid: Double
+    let bestAsk: Double
+    let change: Double
+    let changePercent: Double
+    let open: Double
+    let high: Double
+    let low: Double
+    let volume: Double
+    let lastUpdated: String
+    let timestamp: String
+}
+
+struct MarketTrade: Identifiable {
+    let id = UUID()
+    let symbolId: String
+    let price: Double
+    let timestamp: String
+    let type: Int      // TradeLogType: 0=Buy, 1=Sell
+    let volume: Int
+
+    var isBuy: Bool { type == 0 }
+}
+
+struct DOMEntry: Identifiable {
+    let id = UUID()
+    let timestamp: String
+    let type: Int      // DomType enum
+    let price: Double
+    let volume: Int
+    let currentVolume: Int
+}
+
+enum DomType: Int {
+    case unknown = 0, ask = 1, bid = 2
+    case bestAsk = 3, bestBid = 4, trade = 5, reset = 6
+    case low = 7, high = 8, newBestBid = 9, newBestAsk = 10, fill = 11
+}

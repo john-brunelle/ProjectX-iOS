@@ -113,6 +113,7 @@ struct ContractDetailView: View {
 
     @State private var showPlaceOrder = false
     @State private var showBars       = false
+    @State private var showLiveQuote = false
 
     var body: some View {
         NavigationStack {
@@ -140,6 +141,11 @@ struct ContractDetailView: View {
                         Label("View Historical Bars", systemImage: "chart.bar.xaxis")
                     }
                 }
+                    Button {
+                        showLiveQuote = true
+                    } label: {
+                        Label("View Live Quote", systemImage: "dot.radiowaves.left.and.right")
+                    }
             }
             .navigationTitle(contract.name)
             .navigationBarTitleDisplayMode(.inline)

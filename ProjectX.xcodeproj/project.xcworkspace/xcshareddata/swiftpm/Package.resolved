@@ -1,0 +1,24 @@
+{
+  "originHash" : "7845eed0ecd84fd54b871236282efd91c106cd5f164762166b34e58f5a5c0be6",
+  "pins" : [
+    {
+      "identity" : "lottie-spm",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/airbnb/lottie-spm.git",
+      "state" : {
+        "revision" : "69faaefa7721fba9e434a52c16adf4329c9084db",
+        "version" : "4.6.0"
+      }
+    },
+    {
+      "identity" : "signalr-client-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/moozzyk/SignalR-Client-Swift",
+      "state" : {
+        "revision" : "2e1465d16f2489c70f8925568130d04cb1f17049",
+        "version" : "0.9.4"
+      }
+    }
+  ],
+  "version" : 3
+}

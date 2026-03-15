@@ -2,36 +2,40 @@ import SwiftUI
 
 struct DashboardView: View {
     @Environment(ProjectXService.self) var service
+    @Environment(RealtimeService.self) var realtime
 
     var body: some View {
         TabView {
             AccountsTab()
-                .tabItem {
-                    Label("Accounts", systemImage: "person.crop.rectangle.stack")
-                }
+                .tabItem { Label("Accounts",  systemImage: "person.crop.rectangle.stack") }
             ContractsView()
-                .tabItem {
-                    Label("Contracts", systemImage: "doc.text.magnifyingglass")
-                }
+                .tabItem { Label("Contracts", systemImage: "doc.text.magnifyingglass") }
             PositionsView()
-                .tabItem {
-                    Label("Positions", systemImage: "chart.bar.fill")
-                }
+                .tabItem { Label("Positions", systemImage: "chart.bar.fill") }
             OrdersView()
-                .tabItem {
-                    Label("Orders", systemImage: "list.bullet.rectangle")
-                }
+                .tabItem { Label("Orders",    systemImage: "list.bullet.rectangle") }
             TradesView()
-                .tabItem {
-                    Label("Trades", systemImage: "chart.xyaxis.line")
-                }
+                .tabItem { Label("Trades",    systemImage: "chart.xyaxis.line") }
+            LiveDashboardView()
+                .tabItem { Label("Live",      systemImage: "dot.radiowaves.left.and.right") }
         }
         .environment(service)
+        .environment(realtime)
+        .onAppear {
+            // Auto-connect user hub when dashboard loads
+            if let account = service.accounts.first {
+                realtime.connectUserHub(accountId: account.id)
+            }
+        }
+        .onDisappear {
+            realtime.disconnectAll()
+        }
     }
 }
 
 struct AccountsTab: View {
     @Environment(ProjectXService.self) var service
+    @Environment(RealtimeService.self) var realtime
     @State private var isLoading      = false
     @State private var showOnlyActive = true
 
@@ -63,6 +67,7 @@ struct AccountsTab: View {
                             }
                         Divider()
                         Button(role: .destructive) {
+                            realtime.disconnectAll()
                             service.logout()
                         } label: {
                             Label("Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
@@ -103,8 +108,7 @@ struct AccountRow: View {
             HStack(spacing: 12) {
                 Label(account.canTrade ? "Can Trade" : "No Trading",
                       systemImage: account.canTrade ? "checkmark.circle.fill" : "xmark.circle.fill")
-                    .foregroundStyle(account.canTrade ? .green : .red)
-                    .font(.caption)
+                    .foregroundStyle(account.canTrade ? .green : .red).font(.caption)
                 Label(account.isVisible ? "Visible" : "Hidden",
                       systemImage: account.isVisible ? "eye.fill" : "eye.slash.fill")
                     .foregroundStyle(.secondary).font(.caption)
