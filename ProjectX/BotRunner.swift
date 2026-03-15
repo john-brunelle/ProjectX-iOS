@@ -123,6 +123,37 @@ class BotRunner {
         }
     }
 
+    /// Nuclear stop: halts all bots, cancels every open order,
+    /// and closes every open position concurrently.
+    func nuclearStop() async {
+        // 1. Stop all bots immediately
+        stopAll()
+
+        // Snapshot live state before async work
+        let openOrders    = realtime.liveOrders.filter { $0.status == 1 }
+        let openPositions = realtime.livePositions
+
+        // 2. Cancel open orders + close positions concurrently
+        await withTaskGroup(of: Void.self) { group in
+            for order in openOrders {
+                group.addTask {
+                    _ = await self.service.cancelOrder(
+                        accountId: order.accountId,
+                        orderId:   order.id
+                    )
+                }
+            }
+            for position in openPositions {
+                group.addTask {
+                    _ = await self.service.closePosition(
+                        accountId:  position.accountId,
+                        contractId: position.contractId
+                    )
+                }
+            }
+        }
+    }
+
     func isRunning(_ bot: BotConfig) -> Bool {
         bot.status == .running
     }

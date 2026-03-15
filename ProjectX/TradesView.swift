@@ -60,6 +60,27 @@ struct TradesView: View {
                     Task { await reload() }
                 }
 
+                // Stats bar — always visible, shows zeros when no data
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 12) {
+                        StatCard(title: "Net P&L",
+                                 value: String(format: "$%.2f", totalPnL),
+                                 color: totalPnL >= 0 ? .green : .red)
+                        StatCard(title: "Win Rate",
+                                 value: String(format: "%.0f%%", winRate),
+                                 color: winRate >= 50 ? .green : .orange)
+                        StatCard(title: "Wins / Losses",
+                                 value: "\(winCount) / \(lossCount)",
+                                 color: .blue)
+                        StatCard(title: "Total Fees",
+                                 value: String(format: "$%.2f", totalFees),
+                                 color: .secondary)
+                    }
+                    .padding(.horizontal)
+                    .padding(.vertical, 8)
+                }
+                .background(Color(uiColor: .secondarySystemBackground))
+
                 if isLoading {
                     ProgressView("Loading trades...")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -70,27 +91,6 @@ struct TradesView: View {
                         description: Text("No trades found in this period.")
                     )
                 } else {
-                    // Stats summary cards
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 12) {
-                            StatCard(title: "Net P&L",
-                                     value: String(format: "$%.2f", totalPnL),
-                                     color: totalPnL >= 0 ? .green : .red)
-                            StatCard(title: "Win Rate",
-                                     value: String(format: "%.0f%%", winRate),
-                                     color: winRate >= 50 ? .green : .orange)
-                            StatCard(title: "Wins / Losses",
-                                     value: "\(winCount) / \(lossCount)",
-                                     color: .blue)
-                            StatCard(title: "Total Fees",
-                                     value: String(format: "$%.2f", totalFees),
-                                     color: .secondary)
-                        }
-                        .padding(.horizontal)
-                        .padding(.vertical, 8)
-                    }
-                    .background(Color(uiColor: .secondarySystemBackground))
-
                     List(trades) { trade in
                         TradeRow(trade: trade)
                     }

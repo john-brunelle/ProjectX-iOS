@@ -120,6 +120,7 @@ struct IndicatorEditorView: View {
     // Form state
     @State private var name: String = ""
     @State private var selectedType: IndicatorType = .rsi
+    @State private var showTypePicker = false
 
     // RSI params
     @State private var rsiPeriod: Int = 14
@@ -151,16 +152,17 @@ struct IndicatorEditorView: View {
 
                 // ── Type ─────────────────────
                 Section("Indicator Type") {
-                    Picker("Type", selection: $selectedType) {
-                        ForEach(IndicatorType.allCases) { type in
-                            Label(type.displayName, systemImage: type.systemImage)
-                                .tag(type)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .onChange(of: selectedType) { _, newType in
-                        if !isEditing {
-                            resetToDefaults(for: newType)
+                    Button { showTypePicker = true } label: {
+                        HStack {
+                            Label(selectedType.displayName, systemImage: selectedType.systemImage)
+                                .foregroundStyle(.primary)
+                            Spacer()
+                            Text(selectedType.category)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Image(systemName: "chevron.right")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
                         }
                     }
                 }
@@ -205,6 +207,12 @@ struct IndicatorEditorView: View {
                 }
             }
             .onAppear { loadExisting() }
+            .sheet(isPresented: $showTypePicker) {
+                IndicatorTypePickerSheet(selected: $selectedType)
+                    .onChange(of: selectedType) { _, newType in
+                        if !isEditing { resetToDefaults(for: newType) }
+                    }
+            }
         }
     }
 
@@ -313,5 +321,71 @@ struct IndicatorEditorView: View {
 
         try? modelContext.save()
         dismiss()
+    }
+}
+
+// MARK: - Indicator Type Picker Sheet
+
+struct IndicatorTypePickerSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @Binding var selected: IndicatorType
+    @State private var searchText = ""
+
+    private var grouped: [(category: String, types: [IndicatorType])] {
+        let filtered = searchText.isEmpty
+            ? IndicatorType.allCases
+            : IndicatorType.allCases.filter {
+                $0.displayName.localizedCaseInsensitiveContains(searchText) ||
+                $0.category.localizedCaseInsensitiveContains(searchText)
+              }
+        var orderedCategories = [String]()
+        for type in filtered {
+            if !orderedCategories.contains(type.category) {
+                orderedCategories.append(type.category)
+            }
+        }
+        return orderedCategories.map { cat in
+            (category: cat, types: filtered.filter { $0.category == cat })
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                ForEach(grouped, id: \.category) { group in
+                    Section(group.category) {
+                        ForEach(group.types) { type in
+                            typeRow(for: type)
+                        }
+                    }
+                }
+            }
+            .searchable(text: $searchText, prompt: "Search indicators")
+            .navigationTitle("Select Type")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func typeRow(for type: IndicatorType) -> some View {
+        Button {
+            selected = type
+            dismiss()
+        } label: {
+            HStack {
+                Label(type.displayName, systemImage: type.systemImage)
+                    .foregroundStyle(.primary)
+                Spacer()
+                if type == selected {
+                    Image(systemName: "checkmark")
+                        .foregroundStyle(.tint)
+                }
+            }
+        }
     }
 }

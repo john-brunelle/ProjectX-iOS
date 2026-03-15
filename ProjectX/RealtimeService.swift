@@ -134,6 +134,13 @@ class RealtimeService {
                 } else {
                     self.liveAccounts.append(updated)
                 }
+                NetworkLogger.shared.log(NetworkLogger.Entry(
+                    timestamp: Date(), source: .signalR, method: "GatewayUserAccount",
+                    path: "UserHub", statusCode: nil, duration: nil,
+                    requestBody: nil,
+                    responseBody: "id=\(id) name=\(name) bal=\(balance) canTrade=\(canTrade)",
+                    error: nil
+                ))
             }
         })
 
@@ -167,6 +174,13 @@ class RealtimeService {
                 } else {
                     self.liveOrders.insert(order, at: 0)
                 }
+                NetworkLogger.shared.log(NetworkLogger.Entry(
+                    timestamp: Date(), source: .signalR, method: "GatewayUserOrder",
+                    path: "UserHub", statusCode: nil, duration: nil,
+                    requestBody: nil,
+                    responseBody: "id=\(id) contract=\(contractId) side=\(side) size=\(size) status=\(status) type=\(type)",
+                    error: nil
+                ))
             }
         })
 
@@ -194,6 +208,13 @@ class RealtimeService {
                 } else {
                     self.livePositions.append(position)
                 }
+                NetworkLogger.shared.log(NetworkLogger.Entry(
+                    timestamp: Date(), source: .signalR, method: "GatewayUserPosition",
+                    path: "UserHub", statusCode: nil, duration: nil,
+                    requestBody: nil,
+                    responseBody: "id=\(id) contract=\(contractId) type=\(type) size=\(size) avgPrice=\(avgPrice)",
+                    error: nil
+                ))
             }
         })
 
@@ -223,6 +244,13 @@ class RealtimeService {
                 if self.liveTrades.count > 200 {
                     self.liveTrades = Array(self.liveTrades.prefix(200))
                 }
+                NetworkLogger.shared.log(NetworkLogger.Entry(
+                    timestamp: Date(), source: .signalR, method: "GatewayUserTrade",
+                    path: "UserHub", statusCode: nil, duration: nil,
+                    requestBody: nil,
+                    responseBody: "id=\(id) orderId=\(orderId) side=\(side) size=\(size) price=\(price) pnl=\(trade.profitAndLoss.map { String($0) } ?? "nil")",
+                    error: nil
+                ))
             }
         })
     }
@@ -327,7 +355,16 @@ class RealtimeService {
                 open: open, high: high, low: low, volume: volume,
                 lastUpdated: lastUpdated, timestamp: timestamp
             )
-            Task { @MainActor in self.currentQuote = quote }
+            Task { @MainActor in
+                self.currentQuote = quote
+                NetworkLogger.shared.log(NetworkLogger.Entry(
+                    timestamp: Date(), source: .signalR, method: "GatewayQuote",
+                    path: "MarketHub", statusCode: nil, duration: nil,
+                    requestBody: nil,
+                    responseBody: "\(symbol) last=\(lastPrice) bid=\(bestBid) ask=\(bestAsk) vol=\(volume)",
+                    error: nil
+                ))
+            }
         })
 
         // ── Market Trades ─────────────────────
@@ -348,6 +385,13 @@ class RealtimeService {
                 if self.marketTrades.count > 100 {
                     self.marketTrades = Array(self.marketTrades.prefix(100))
                 }
+                NetworkLogger.shared.log(NetworkLogger.Entry(
+                    timestamp: Date(), source: .signalR, method: "GatewayTrade",
+                    path: "MarketHub", statusCode: nil, duration: nil,
+                    requestBody: nil,
+                    responseBody: "\(symbolId) price=\(price) vol=\(volume) type=\(type)",
+                    error: nil
+                ))
             }
         })
 
@@ -378,6 +422,13 @@ class RealtimeService {
                 if self.domEntries.count > 40 {
                     self.domEntries = Array(self.domEntries.prefix(40))
                 }
+                NetworkLogger.shared.log(NetworkLogger.Entry(
+                    timestamp: Date(), source: .signalR, method: "GatewayDepth",
+                    path: "MarketHub", statusCode: nil, duration: nil,
+                    requestBody: nil,
+                    responseBody: "type=\(type) price=\(price) vol=\(volume) currVol=\(currentVolume)",
+                    error: nil
+                ))
             }
         })
     }

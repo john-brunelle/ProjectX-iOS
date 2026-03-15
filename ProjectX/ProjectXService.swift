@@ -83,20 +83,44 @@ class ProjectXService {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("text/plain",       forHTTPHeaderField: "accept")
         if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+
+        let start = Date()
+        let requestBodyStr = try? String(data: JSONEncoder().encode(body), encoding: .utf8)
+
         do {
             request.httpBody = try JSONEncoder().encode(body)
             let (data, httpResponse) = try await URLSession.shared.data(for: request)
-            if let httpResponse = httpResponse as? HTTPURLResponse {
-                print("ProjectXService [\(path)] HTTP \(httpResponse.statusCode)")
+            let statusCode = (httpResponse as? HTTPURLResponse)?.statusCode
+            let duration = Date().timeIntervalSince(start)
+            let responseStr = String(data: data, encoding: .utf8)
+
+            if let statusCode {
+                print("ProjectXService [\(path)] HTTP \(statusCode)")
             }
             #if DEBUG
-            if let raw = String(data: data, encoding: .utf8) {
+            if let raw = responseStr {
                 print("ProjectXService [\(path)] response: \(raw)")
             }
             #endif
+
+            NetworkLogger.shared.log(NetworkLogger.Entry(
+                timestamp: start, source: .rest, method: "POST", path: path,
+                statusCode: statusCode, duration: duration,
+                requestBody: requestBodyStr, responseBody: responseStr, error: nil
+            ))
+
             return try JSONDecoder().decode(R.self, from: data)
         } catch {
+            let duration = Date().timeIntervalSince(start)
             print("ProjectXService [\(path)] error: \(error)")
+
+            NetworkLogger.shared.log(NetworkLogger.Entry(
+                timestamp: start, source: .rest, method: "POST", path: path,
+                statusCode: nil, duration: duration,
+                requestBody: requestBodyStr, responseBody: nil,
+                error: error.localizedDescription
+            ))
+
             return nil
         }
     }

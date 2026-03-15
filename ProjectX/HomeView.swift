@@ -31,6 +31,7 @@ struct HomeView: View {
 
     @State private var path = NavigationPath()
     @State private var showStopAllConfirmation = false
+    @State private var showNuclearConfirmation = false
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -54,9 +55,6 @@ struct HomeView: View {
                     // ── Open Orders ─────────────────
                     openOrdersCard
 
-                    // ── Recent Trades ───────────────
-                    recentTradesCard
-
                     // ── Quick Quote ─────────────────
                     quoteCard
                 }
@@ -74,6 +72,30 @@ struct HomeView: View {
                 case .indicators: IndicatorsView(isEmbedded: true)
                 }
             }
+        }
+        .confirmationDialog(
+            "Stop All Bots?",
+            isPresented: $showStopAllConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Stop All \(botRunner.runningCount) Bot\(botRunner.runningCount == 1 ? "" : "s")", role: .destructive) {
+                botRunner.stopAll()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This will immediately stop all running bots. Any open positions will remain open.")
+        }
+        .confirmationDialog(
+            "Nuclear Stop?",
+            isPresented: $showNuclearConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Stop Bots, Cancel Orders & Close Positions", role: .destructive) {
+                Task { await botRunner.nuclearStop() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This will stop all bots, cancel every open order, and close every open position. This cannot be undone.")
         }
     }
 
@@ -292,42 +314,6 @@ struct HomeView: View {
     }
 
     // ═══════════════════════════════════════════
-    // MARK: - Recent Trades Card
-    // ═══════════════════════════════════════════
-
-    private var recentTradesCard: some View {
-        card("Recent Trades", systemImage: "chart.xyaxis.line", destination: .trades) {
-            if realtime.liveTrades.isEmpty {
-                Text("No trades yet")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
-                VStack(spacing: 6) {
-                    ForEach(realtime.liveTrades.prefix(5)) { trade in
-                        HStack {
-                            Text(trade.sideLabel)
-                                .font(.caption.weight(.bold))
-                                .foregroundStyle(trade.side == 0 ? .green : .red)
-                            Text(String(format: "%.2f", trade.price))
-                                .font(.caption)
-                            Spacer()
-                            if let pnl = trade.profitAndLoss {
-                                Text(pnl, format: .currency(code: "USD"))
-                                    .font(.caption.weight(.medium))
-                                    .foregroundStyle(pnl >= 0 ? .green : .red)
-                            } else {
-                                Text("half-turn")
-                                    .font(.caption2)
-                                    .foregroundStyle(.tertiary)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // ═══════════════════════════════════════════
     // MARK: - Bots Card
     // ═══════════════════════════════════════════
 
@@ -352,6 +338,10 @@ struct HomeView: View {
 
                                 Text(bot.name)
                                     .font(.caption.weight(.medium))
+                                    .lineLimit(1)
+                                Text(bot.contractName)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
                                     .lineLimit(1)
 
                                 if running, let state {
@@ -417,11 +407,13 @@ struct HomeView: View {
 
                     if botRunner.runningCount > 0 {
                         Divider()
+
+                        // Stop bots only
                         Button(role: .destructive) {
                             showStopAllConfirmation = true
                         } label: {
                             Label(
-                                "Emergency Stop — \(botRunner.runningCount) Bot\(botRunner.runningCount == 1 ? "" : "s") Running",
+                                "Stop All Bots (\(botRunner.runningCount) Running)",
                                 systemImage: "stop.circle.fill"
                             )
                             .font(.caption.weight(.semibold))
@@ -429,18 +421,20 @@ struct HomeView: View {
                             .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.plain)
-                        .confirmationDialog(
-                            "Stop All Bots?",
-                            isPresented: $showStopAllConfirmation,
-                            titleVisibility: .visible
-                        ) {
-                            Button("Stop All \(botRunner.runningCount) Bot\(botRunner.runningCount == 1 ? "" : "s")", role: .destructive) {
-                                botRunner.stopAll()
-                            }
-                            Button("Cancel", role: .cancel) {}
-                        } message: {
-                            Text("This will immediately stop all running bots. Any open positions will remain open.")
+
+                        // Nuclear stop — bots + orders + positions
+                        Button(role: .destructive) {
+                            showNuclearConfirmation = true
+                        } label: {
+                            Label(
+                                "Nuclear Stop — Bots, Orders & Positions",
+                                systemImage: "exclamationmark.octagon.fill"
+                            )
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.orange)
+                            .frame(maxWidth: .infinity)
                         }
+                        .buttonStyle(.plain)
                     }
                 }
             }

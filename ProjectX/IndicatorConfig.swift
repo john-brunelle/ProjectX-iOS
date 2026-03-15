@@ -36,6 +36,15 @@ enum IndicatorType: String, Codable, CaseIterable, Identifiable {
         }
     }
 
+    var category: String {
+        switch self {
+        case .rsi:  "Momentum"
+        case .macd: "Trend"
+        case .obv:  "Volume"
+        case .ma:   "Trend"
+        }
+    }
+
     var defaultParameters: IndicatorParameters {
         switch self {
         case .rsi:  .defaultRSI()

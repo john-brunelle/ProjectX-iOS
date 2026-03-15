@@ -21,6 +21,7 @@ struct BotsView: View {
     @State private var showWizard = false
     @State private var selectedBot: BotConfig?
     @State private var showStopAllConfirmation = false
+    @State private var showNuclearConfirmation = false
 
     var body: some View {
         if isEmbedded {
@@ -60,10 +61,19 @@ struct BotsView: View {
                 }
                 if botRunner.runningCount > 0 {
                     ToolbarItem(placement: .navigationBarLeading) {
-                        Button(role: .destructive) {
-                            showStopAllConfirmation = true
+                        Menu {
+                            Button(role: .destructive) {
+                                showStopAllConfirmation = true
+                            } label: {
+                                Label("Stop All Bots", systemImage: "stop.circle.fill")
+                            }
+                            Button(role: .destructive) {
+                                showNuclearConfirmation = true
+                            } label: {
+                                Label("Nuclear Stop — Bots, Orders & Positions", systemImage: "exclamationmark.octagon.fill")
+                            }
                         } label: {
-                            Label("Stop All", systemImage: "stop.circle.fill")
+                            Label("Emergency", systemImage: "stop.circle.fill")
                                 .foregroundStyle(.red)
                         }
                     }
@@ -80,6 +90,18 @@ struct BotsView: View {
                 Button("Cancel", role: .cancel) {}
             } message: {
                 Text("This will immediately stop all running bots. Any open positions will remain open.")
+            }
+            .confirmationDialog(
+                "Nuclear Stop?",
+                isPresented: $showNuclearConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Stop Bots, Cancel Orders & Close Positions", role: .destructive) {
+                    Task { await botRunner.nuclearStop() }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This will stop all bots, cancel every open order, and close every open position. This cannot be undone.")
             }
             .sheet(isPresented: $showWizard) {
                 BotWizardView(existing: nil)

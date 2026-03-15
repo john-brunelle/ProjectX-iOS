@@ -40,6 +40,9 @@ struct DashboardView: View {
             ThemesView()
                 .tabItem { Label("Themes",     systemImage: "paintbrush.fill") }
                 .tag(9)
+            NetworkActivityView()
+                .tabItem { Label("Network",    systemImage: "network") }
+                .tag(10)
         }
         .environment(service)
         .environment(realtime)
