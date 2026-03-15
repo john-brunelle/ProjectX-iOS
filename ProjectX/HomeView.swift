@@ -30,6 +30,7 @@ struct HomeView: View {
     private var bots: [BotConfig]
 
     @State private var path = NavigationPath()
+    @State private var showStopAllConfirmation = false
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -337,50 +338,109 @@ struct HomeView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
-                VStack(spacing: 8) {
+                VStack(spacing: 10) {
                     ForEach(bots.prefix(5)) { bot in
-                        HStack {
-                            let running = botRunner.isRunning(bot)
+                        let running = botRunner.isRunning(bot)
+                        let state = botRunner.runStates[bot.id]
 
-                            // Pulsing dot when running
-                            Circle()
-                                .fill(running ? .green : .gray.opacity(0.4))
-                                .frame(width: 8, height: 8)
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                // Pulsing dot when running
+                                Circle()
+                                    .fill(running ? .green : .gray.opacity(0.4))
+                                    .frame(width: 8, height: 8)
 
-                            Text(bot.name)
-                                .font(.caption.weight(.medium))
-                                .lineLimit(1)
+                                Text(bot.name)
+                                    .font(.caption.weight(.medium))
+                                    .lineLimit(1)
 
-                            if running, let state = botRunner.runStates[bot.id] {
-                                Text(state.lastSignal == .buy ? "BUY" :
-                                     state.lastSignal == .sell ? "SELL" : "—")
-                                    .font(.caption2.weight(.bold))
-                                    .foregroundStyle(
-                                        state.lastSignal == .buy ? .green :
-                                        state.lastSignal == .sell ? .red : .secondary
-                                    )
-                            }
-
-                            Spacer()
-
-                            // Start / Stop button
-                            Button {
-                                if running {
-                                    botRunner.stop(bot: bot)
-                                } else {
-                                    botRunner.start(bot: bot)
+                                if running, let state {
+                                    Text(state.lastSignal == .buy ? "BUY" :
+                                         state.lastSignal == .sell ? "SELL" : "—")
+                                        .font(.caption2.weight(.bold))
+                                        .foregroundStyle(
+                                            state.lastSignal == .buy ? .green :
+                                            state.lastSignal == .sell ? .red : .secondary
+                                        )
                                 }
-                            } label: {
-                                Image(systemName: running ? "stop.circle.fill" : "play.circle.fill")
-                                    .foregroundStyle(running ? .red : .green)
+
+                                Spacer()
+
+                                // Start / Stop button
+                                Button {
+                                    if running {
+                                        botRunner.stop(bot: bot)
+                                    } else {
+                                        botRunner.start(bot: bot)
+                                    }
+                                } label: {
+                                    Image(systemName: running ? "stop.circle.fill" : "play.circle.fill")
+                                        .foregroundStyle(running ? .red : .green)
+                                }
+                                .buttonStyle(.plain)
                             }
-                            .buttonStyle(.plain)
+
+                            // P&L line
+                            HStack(spacing: 10) {
+                                // Session (only while running)
+                                if running, let state {
+                                    HStack(spacing: 3) {
+                                        Text("Session:")
+                                            .foregroundStyle(.secondary)
+                                        Text(formatPnL(state.sessionPnL))
+                                            .foregroundStyle(state.sessionPnL >= 0 ? .green : .red)
+                                            .fontWeight(.semibold)
+                                        Text("(\(state.sessionTradeCount))")
+                                            .foregroundStyle(.tertiary)
+                                    }
+                                }
+
+                                // Lifetime
+                                HStack(spacing: 3) {
+                                    Text(running ? "Lifetime:" : "All Time:")
+                                        .foregroundStyle(.secondary)
+                                    Text(formatPnL(bot.lifetimePnL))
+                                        .foregroundStyle(bot.lifetimePnL >= 0 ? .green : .red)
+                                        .fontWeight(.semibold)
+                                    Text("(\(bot.lifetimeTradeCount))")
+                                        .foregroundStyle(.tertiary)
+                                }
+                            }
+                            .font(.caption2)
                         }
                     }
                     if bots.count > 5 {
                         Text("+\(bots.count - 5) more bots")
                             .font(.caption2)
                             .foregroundStyle(.tertiary)
+                    }
+
+                    if botRunner.runningCount > 0 {
+                        Divider()
+                        Button(role: .destructive) {
+                            showStopAllConfirmation = true
+                        } label: {
+                            Label(
+                                "Emergency Stop — \(botRunner.runningCount) Bot\(botRunner.runningCount == 1 ? "" : "s") Running",
+                                systemImage: "stop.circle.fill"
+                            )
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.red)
+                            .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.plain)
+                        .confirmationDialog(
+                            "Stop All Bots?",
+                            isPresented: $showStopAllConfirmation,
+                            titleVisibility: .visible
+                        ) {
+                            Button("Stop All \(botRunner.runningCount) Bot\(botRunner.runningCount == 1 ? "" : "s")", role: .destructive) {
+                                botRunner.stopAll()
+                            }
+                            Button("Cancel", role: .cancel) {}
+                        } message: {
+                            Text("This will immediately stop all running bots. Any open positions will remain open.")
+                        }
                     }
                 }
             }
@@ -434,6 +494,19 @@ struct HomeView: View {
                     .foregroundStyle(.secondary)
             }
         }
+    }
+
+    // ═══════════════════════════════════════════
+    // MARK: - Helpers
+    // ═══════════════════════════════════════════
+
+    private func formatPnL(_ value: Double) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .currency
+        formatter.currencyCode = "USD"
+        formatter.positivePrefix = "+"
+        formatter.maximumFractionDigits = 2
+        return formatter.string(from: NSNumber(value: value)) ?? "$0.00"
     }
 
     // ═══════════════════════════════════════════

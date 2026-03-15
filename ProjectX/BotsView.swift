@@ -20,6 +20,7 @@ struct BotsView: View {
 
     @State private var showWizard = false
     @State private var selectedBot: BotConfig?
+    @State private var showStopAllConfirmation = false
 
     var body: some View {
         if isEmbedded {
@@ -57,6 +58,28 @@ struct BotsView: View {
                         Image(systemName: "plus")
                     }
                 }
+                if botRunner.runningCount > 0 {
+                    ToolbarItem(placement: .navigationBarLeading) {
+                        Button(role: .destructive) {
+                            showStopAllConfirmation = true
+                        } label: {
+                            Label("Stop All", systemImage: "stop.circle.fill")
+                                .foregroundStyle(.red)
+                        }
+                    }
+                }
+            }
+            .confirmationDialog(
+                "Stop All Bots?",
+                isPresented: $showStopAllConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Stop All \(botRunner.runningCount) Bot\(botRunner.runningCount == 1 ? "" : "s")", role: .destructive) {
+                    botRunner.stopAll()
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This will immediately stop all running bots. Any open positions will remain open.")
             }
             .sheet(isPresented: $showWizard) {
                 BotWizardView(existing: nil)
@@ -109,6 +132,24 @@ struct BotRow: View {
                     .foregroundStyle(.secondary)
             }
 
+            // P&L summary row
+            HStack(spacing: 4) {
+                Image(systemName: bot.lifetimePnL >= 0 ? "arrow.up.right" : "arrow.down.right")
+                    .font(.caption2)
+                Text(formatPnL(bot.lifetimePnL))
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                Text("(\(bot.lifetimeTradeCount) trade\(bot.lifetimeTradeCount == 1 ? "" : "s"))")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                if bot.status == .running, let state = runState, state.sessionPnL != 0 {
+                    Text("· \(formatPnL(state.sessionPnL)) session")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .foregroundStyle(bot.lifetimePnL >= 0 ? Color.green : Color.red)
+
             // Live status when running
             if bot.status == .running, let state = runState {
                 HStack(spacing: 12) {
@@ -134,6 +175,15 @@ struct BotRow: View {
             }
         }
         .padding(.vertical, 4)
+    }
+
+    private func formatPnL(_ value: Double) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .currency
+        formatter.currencyCode = "USD"
+        formatter.positivePrefix = "+"
+        formatter.maximumFractionDigits = 2
+        return formatter.string(from: NSNumber(value: value)) ?? "$0.00"
     }
 
     private var statusColor: Color {

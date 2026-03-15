@@ -35,6 +35,11 @@ struct BotRunState {
     var lastBarTime: String?
     var lastPollTime: Date?
     var log: [BotLogEntry] = []
+
+    // P&L tracking — matched via orderId against liveTrades
+    var placedOrderIds: Set<Int> = []
+    var sessionPnL: Double = 0
+    var sessionTradeCount: Int = 0
 }
 
 // MARK: - Bot Runner
@@ -91,6 +96,10 @@ class BotRunner {
     func stop(bot: BotConfig) {
         let botId = bot.id
         if let existing = runStates[botId] {
+            // Flush session P&L into lifetime before clearing
+            bot.lifetimePnL += existing.sessionPnL
+            bot.lifetimeTradeCount += existing.sessionTradeCount
+
             existing.task?.cancel()
             var updated = existing
             updated.task = nil
@@ -174,6 +183,9 @@ class BotRunner {
 
         // Handle non-neutral signal
         await handleSignal(signal, bot: bot)
+
+        // Refresh session P&L from matched live trades
+        updateSessionPnL(botId: botId)
     }
 
     // MARK: - Signal → Order
@@ -216,6 +228,9 @@ class BotRunner {
         )
 
         if let orderId {
+            updateState(botId: botId) { state in
+                state.placedOrderIds.insert(orderId)
+            }
             logToState(botId: botId, type: .order,
                        message: "Placed \(side.label) order #\(orderId) (qty: \(bot.quantity))")
         } else {
@@ -223,6 +238,20 @@ class BotRunner {
                        message: "Order placement failed: \(service.errorMessage ?? "unknown error")")
             bot.status = .error
             bot.updatedAt = Date()
+        }
+    }
+
+    // MARK: - Session P&L
+
+    private func updateSessionPnL(botId: UUID) {
+        guard let orderIds = runStates[botId]?.placedOrderIds, !orderIds.isEmpty else { return }
+        let matched = realtime.liveTrades.filter {
+            orderIds.contains($0.orderId) && !$0.voided && $0.profitAndLoss != nil
+        }
+        let pnl = matched.compactMap { $0.profitAndLoss }.reduce(0, +)
+        updateState(botId: botId) { state in
+            state.sessionPnL = pnl
+            state.sessionTradeCount = matched.count
         }
     }
 

@@ -84,6 +84,10 @@ final class BotConfig {
     var createdAt: Date
     var updatedAt: Date
 
+    // Lifetime P&L (accumulated across all stopped sessions)
+    var lifetimePnL: Double = 0
+    var lifetimeTradeCount: Int = 0
+
     // Many-to-many: indicators used by this bot
     @Relationship(inverse: \IndicatorConfig.bots)
     var indicators: [IndicatorConfig]

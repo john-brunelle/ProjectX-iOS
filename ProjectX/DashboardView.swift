@@ -34,15 +34,12 @@ struct DashboardView: View {
             TradesView()
                 .tabItem { Label("Trades",     systemImage: "chart.xyaxis.line") }
                 .tag(7)
-            BacktestView()
-                .tabItem { Label("Backtest",   systemImage: "clock.arrow.2.circlepath") }
-                .tag(8)
             ContractsView()
                 .tabItem { Label("Contracts",  systemImage: "doc.text.magnifyingglass") }
-                .tag(9)
+                .tag(8)
             ThemesView()
                 .tabItem { Label("Themes",     systemImage: "paintbrush.fill") }
-                .tag(10)
+                .tag(9)
         }
         .environment(service)
         .environment(realtime)
