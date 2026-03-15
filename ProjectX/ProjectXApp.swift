@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 
 @main
 struct ProjectXApp: App {
@@ -14,5 +15,6 @@ struct ProjectXApp: App {
                 .environment(themeManager)
                 .preferredColorScheme(themeManager.preferredColorScheme)
         }
+        .modelContainer(for: [IndicatorConfig.self, BotConfig.self])
     }
 }

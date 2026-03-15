@@ -18,6 +18,10 @@ struct DashboardView: View {
                 .tabItem { Label("Trades",    systemImage: "chart.xyaxis.line") }
             LiveDashboardView()
                 .tabItem { Label("Live",      systemImage: "dot.radiowaves.left.and.right") }
+            IndicatorsView()
+                .tabItem { Label("Indicators", systemImage: "waveform.path.ecg") }
+            BotsView()
+                .tabItem { Label("Bots",      systemImage: "gearshape.2.fill") }
             ThemesView()
                 .tabItem { Label("Themes",    systemImage: "paintbrush.fill") }
         }
