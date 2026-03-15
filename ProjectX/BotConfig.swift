@@ -37,6 +37,24 @@ enum BotStatus: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+// MARK: - Trade Direction Filter
+
+enum TradeDirectionFilter: String, Codable, CaseIterable, Identifiable {
+    case both
+    case longOnly
+    case shortOnly
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .both:      "Longs & Shorts"
+        case .longOnly:  "Longs Only"
+        case .shortOnly: "Shorts Only"
+        }
+    }
+}
+
 // MARK: - SwiftData Model
 
 @Model
@@ -57,6 +75,7 @@ final class BotConfig {
     var stopLossTicks: Int?
     var takeProfitTicks: Int?
     var quantity: Int          // fixed contract quantity per trade
+    var tradeDirectionRaw: String  // TradeDirectionFilter raw value
 
     // Status
     var statusRaw: String
@@ -74,6 +93,11 @@ final class BotConfig {
     var status: BotStatus {
         get { BotStatus(rawValue: statusRaw) ?? .stopped }
         set { statusRaw = newValue.rawValue }
+    }
+
+    var tradeDirection: TradeDirectionFilter {
+        get { TradeDirectionFilter(rawValue: tradeDirectionRaw) ?? .both }
+        set { tradeDirectionRaw = newValue.rawValue }
     }
 
     var barUnitEnum: BarUnit? {
@@ -97,6 +121,7 @@ final class BotConfig {
         stopLossTicks: Int? = nil,
         takeProfitTicks: Int? = nil,
         quantity: Int = 1,
+        tradeDirection: TradeDirectionFilter = .both,
         indicators: [IndicatorConfig] = []
     ) {
         self.id = UUID()
@@ -109,6 +134,7 @@ final class BotConfig {
         self.stopLossTicks = stopLossTicks
         self.takeProfitTicks = takeProfitTicks
         self.quantity = quantity
+        self.tradeDirectionRaw = tradeDirection.rawValue
         self.statusRaw = BotStatus.stopped.rawValue
         self.createdAt = Date()
         self.updatedAt = Date()

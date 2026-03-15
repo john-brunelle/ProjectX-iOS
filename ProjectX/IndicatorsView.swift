@@ -17,6 +17,9 @@ struct IndicatorsView: View {
     @State private var showingEditor = false
     @State private var selectedIndicator: IndicatorConfig?
 
+    /// When non-nil, shows a "Done" button (used when presented as a sheet from BacktestView).
+    var onDone: (() -> Void)? = nil
+
     var body: some View {
         NavigationStack {
             Group {
@@ -41,6 +44,11 @@ struct IndicatorsView: View {
             }
             .navigationTitle("Indicators")
             .toolbar {
+                if let onDone {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Done") { onDone() }
+                    }
+                }
                 ToolbarItem(placement: .primaryAction) {
                     Button {
                         selectedIndicator = nil
@@ -118,6 +126,11 @@ struct IndicatorEditorView: View {
     // OBV params
     @State private var obvSmoothing: Int = 20
 
+    // MA params
+    @State private var maFast: Int = 10
+    @State private var maSlow: Int = 50
+    @State private var maUseEMA: Bool = true
+
     var isEditing: Bool { existing != nil }
 
     var body: some View {
@@ -153,7 +166,16 @@ struct IndicatorEditorView: View {
                         macdParametersSection
                     case .obv:
                         obvParametersSection
+                    case .ma:
+                        maParametersSection
                     }
+                }
+
+                // ── Signal Description ───────
+                Section("Signal Logic") {
+                    Text(currentParameters.signalDescription)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 // ── Reset ────────────────────
@@ -203,6 +225,26 @@ struct IndicatorEditorView: View {
         Stepper("Smoothing Period: \(obvSmoothing)", value: $obvSmoothing, in: 2...100)
     }
 
+    // MARK: MA Parameters
+
+    @ViewBuilder
+    private var maParametersSection: some View {
+        Stepper("Fast Period: \(maFast)", value: $maFast, in: 2...200)
+        Stepper("Slow Period: \(maSlow)", value: $maSlow, in: 2...500)
+        Toggle("Use EMA (vs SMA)", isOn: $maUseEMA)
+    }
+
+    // MARK: Current Parameters (for signal description)
+
+    private var currentParameters: IndicatorParameters {
+        switch selectedType {
+        case .rsi:  .rsi(period: rsiPeriod, overbought: rsiOverbought, oversold: rsiOversold)
+        case .macd: .macd(fastPeriod: macdFast, slowPeriod: macdSlow, signalPeriod: macdSignal)
+        case .obv:  .obv(smoothingPeriod: obvSmoothing)
+        case .ma:   .ma(fastPeriod: maFast, slowPeriod: maSlow, useEMA: maUseEMA)
+        }
+    }
+
     // MARK: Actions
 
     private func loadExisting() {
@@ -221,6 +263,10 @@ struct IndicatorEditorView: View {
             macdSignal = signal
         case .obv(let smoothing):
             obvSmoothing = smoothing
+        case .ma(let fast, let slow, let useEMA):
+            maFast = fast
+            maSlow = slow
+            maUseEMA = useEMA
         }
     }
 
@@ -232,6 +278,8 @@ struct IndicatorEditorView: View {
             macdFast = 12; macdSlow = 26; macdSignal = 9
         case .obv:
             obvSmoothing = 20
+        case .ma:
+            maFast = 10; maSlow = 50; maUseEMA = true
         }
     }
 
@@ -240,6 +288,7 @@ struct IndicatorEditorView: View {
         case .rsi:  .rsi(period: rsiPeriod, overbought: rsiOverbought, oversold: rsiOversold)
         case .macd: .macd(fastPeriod: macdFast, slowPeriod: macdSlow, signalPeriod: macdSignal)
         case .obv:  .obv(smoothingPeriod: obvSmoothing)
+        case .ma:   .ma(fastPeriod: maFast, slowPeriod: maSlow, useEMA: maUseEMA)
         }
 
         let trimmedName = name.trimmingCharacters(in: .whitespaces)
@@ -254,6 +303,7 @@ struct IndicatorEditorView: View {
             modelContext.insert(config)
         }
 
+        try? modelContext.save()
         dismiss()
     }
 }

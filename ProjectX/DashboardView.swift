@@ -24,6 +24,8 @@ struct DashboardView: View {
             BotsView()
                 .tabItem { Label("Bots",      systemImage: "gearshape.2.fill") }
                 .badge(botRunner.runningCount)
+            BacktestView()
+                .tabItem { Label("Backtest",  systemImage: "clock.arrow.2.circlepath") }
             ThemesView()
                 .tabItem { Label("Themes",    systemImage: "paintbrush.fill") }
         }

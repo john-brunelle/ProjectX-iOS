@@ -157,8 +157,16 @@ class BotRunner {
         switch signal {
         case .buy:
             logToState(botId: botId, type: .signal, message: "Signal: BUY")
+            if bot.tradeDirection == .shortOnly {
+                logToState(botId: botId, type: .info, message: "Skipped: bot set to Shorts Only")
+                return
+            }
         case .sell:
             logToState(botId: botId, type: .signal, message: "Signal: SELL")
+            if bot.tradeDirection == .longOnly {
+                logToState(botId: botId, type: .info, message: "Skipped: bot set to Longs Only")
+                return
+            }
         case .neutral:
             logToState(botId: botId, type: .signal, message: "Signal: Neutral")
             return

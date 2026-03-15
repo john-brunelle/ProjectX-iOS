@@ -43,6 +43,8 @@ struct IndicatorEngine {
             return calculateMACD(bars: bars, fastPeriod: fast, slowPeriod: slow, signalPeriod: signal)
         case .obv(let smoothing):
             return calculateOBV(bars: bars, smoothingPeriod: smoothing)
+        case .ma(let fast, let slow, let useEMA):
+            return calculateMA(bars: bars, fastPeriod: fast, slowPeriod: slow, useEMA: useEMA)
         }
     }
 
@@ -255,6 +257,62 @@ struct IndicatorEngine {
             signal: signal,
             indicatorType: .obv,
             values: ["obv": currentOBV, "obvMA": currentMA]
+        )
+    }
+
+    // MARK: - Moving Average Calculator
+
+    private static func calculateMA(
+        bars: [Bar],
+        fastPeriod: Int,
+        slowPeriod: Int,
+        useEMA: Bool
+    ) -> IndicatorResult {
+        // Need enough bars for slow MA + 1 for crossing detection
+        let minBars = slowPeriod + 2
+        guard bars.count >= minBars else {
+            return IndicatorResult(signal: .neutral, indicatorType: .ma, values: [:])
+        }
+
+        let closes = bars.map { $0.c }
+
+        // Calculate fast and slow moving averages
+        let fastMA: [Double]
+        let slowMA: [Double]
+
+        if useEMA {
+            fastMA = ema(values: closes, period: fastPeriod)
+            slowMA = ema(values: closes, period: slowPeriod)
+        } else {
+            fastMA = sma(values: closes, period: fastPeriod)
+            slowMA = sma(values: closes, period: slowPeriod)
+        }
+
+        guard fastMA.count >= 2 && slowMA.count >= 2 else {
+            return IndicatorResult(signal: .neutral, indicatorType: .ma, values: [:])
+        }
+
+        // Align from the end
+        let currentFast  = fastMA[fastMA.count - 1]
+        let previousFast = fastMA[fastMA.count - 2]
+        let currentSlow  = slowMA[slowMA.count - 1]
+        let previousSlow = slowMA[slowMA.count - 2]
+
+        // Crossing detection
+        var signal: Signal = .neutral
+        if previousFast <= previousSlow && currentFast > currentSlow {
+            signal = .buy   // Fast MA crossed above slow MA (golden cross)
+        } else if previousFast >= previousSlow && currentFast < currentSlow {
+            signal = .sell  // Fast MA crossed below slow MA (death cross)
+        }
+
+        return IndicatorResult(
+            signal: signal,
+            indicatorType: .ma,
+            values: [
+                "fastMA": currentFast,
+                "slowMA": currentSlow
+            ]
         )
     }
 

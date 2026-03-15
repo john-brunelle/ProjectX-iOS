@@ -45,6 +45,7 @@ struct BotWizardView: View {
     @State private var useTakeProfit = false
     @State private var takeProfitTicks = 20
     @State private var quantity = 1
+    @State private var tradeDirection: TradeDirectionFilter = .both
 
     // Step 5: Review
     @State private var testBarCount: Int?
@@ -138,10 +139,29 @@ struct BotWizardView: View {
             }
 
             Section("Contract") {
+                HStack {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(.secondary)
+                    TextField("Search contracts", text: $contractSearch)
+                        .textFieldStyle(.plain)
+                    if !contractSearch.isEmpty {
+                        Button {
+                            contractSearch = ""
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
                 if isLoadingContracts {
                     ProgressView("Loading contracts...")
                 } else if contracts.isEmpty {
                     Text("No contracts found")
+                        .foregroundStyle(.secondary)
+                } else if filteredContracts.isEmpty {
+                    Text("No contracts match \"\(contractSearch)\"")
                         .foregroundStyle(.secondary)
                 } else {
                     ForEach(filteredContracts) { contract in
@@ -164,7 +184,6 @@ struct BotWizardView: View {
                 }
             }
         }
-        .searchable(text: $contractSearch, prompt: "Search contracts")
         .task { await loadContracts() }
     }
 
@@ -288,6 +307,15 @@ struct BotWizardView: View {
                     Stepper("Ticks: \(takeProfitTicks)", value: $takeProfitTicks, in: 1...500)
                 }
             }
+
+            Section("Trade Direction") {
+                Picker("Direction", selection: $tradeDirection) {
+                    ForEach(TradeDirectionFilter.allCases) { direction in
+                        Text(direction.displayName).tag(direction)
+                    }
+                }
+                .pickerStyle(.segmented)
+            }
         }
     }
 
@@ -329,6 +357,7 @@ struct BotWizardView: View {
                 reviewRow("Quantity", "\(quantity)")
                 reviewRow("Stop Loss", useStopLoss ? "\(stopLossTicks) ticks" : "None")
                 reviewRow("Take Profit", useTakeProfit ? "\(takeProfitTicks) ticks" : "None")
+                reviewRow("Direction", tradeDirection.displayName)
             }
 
             Section("Data Check") {
@@ -420,6 +449,7 @@ struct BotWizardView: View {
             existing.stopLossTicks = useStopLoss ? stopLossTicks : nil
             existing.takeProfitTicks = useTakeProfit ? takeProfitTicks : nil
             existing.quantity = quantity
+            existing.tradeDirection = tradeDirection
             existing.indicators = selectedConfigs
             existing.updatedAt = Date()
         } else {
@@ -433,6 +463,7 @@ struct BotWizardView: View {
                 stopLossTicks: useStopLoss ? stopLossTicks : nil,
                 takeProfitTicks: useTakeProfit ? takeProfitTicks : nil,
                 quantity: quantity,
+                tradeDirection: tradeDirection,
                 indicators: selectedConfigs
             )
             modelContext.insert(bot)
@@ -454,6 +485,7 @@ struct BotWizardView: View {
         useTakeProfit = existing.takeProfitTicks != nil
         takeProfitTicks = existing.takeProfitTicks ?? 20
         quantity = existing.quantity
+        tradeDirection = existing.tradeDirection
         selectedIndicatorIDs = Set(existing.indicators.map { $0.id })
 
         // Load contract asynchronously

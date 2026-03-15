@@ -131,6 +131,7 @@ struct BotDetailView: View {
                               bot.stopLossTicks.map { "\($0) ticks" } ?? "None")
                     detailRow("Take Profit",
                               bot.takeProfitTicks.map { "\($0) ticks" } ?? "None")
+                    detailRow("Direction", bot.tradeDirection.displayName)
                 }
 
                 // ── Indicators ───────────────
@@ -250,6 +251,7 @@ struct BotDetailView: View {
             stopLossTicks: bot.stopLossTicks,
             takeProfitTicks: bot.takeProfitTicks,
             quantity: bot.quantity,
+            tradeDirection: bot.tradeDirection,
             indicators: bot.indicators  // share references
         )
         modelContext.insert(copy)

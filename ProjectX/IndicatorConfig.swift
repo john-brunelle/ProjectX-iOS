@@ -14,6 +14,7 @@ enum IndicatorType: String, Codable, CaseIterable, Identifiable {
     case rsi
     case macd
     case obv
+    case ma
 
     var id: String { rawValue }
 
@@ -22,6 +23,7 @@ enum IndicatorType: String, Codable, CaseIterable, Identifiable {
         case .rsi:  "RSI"
         case .macd: "MACD"
         case .obv:  "OBV"
+        case .ma:   "MA"
         }
     }
 
@@ -30,6 +32,7 @@ enum IndicatorType: String, Codable, CaseIterable, Identifiable {
         case .rsi:  "chart.line.uptrend.xyaxis"
         case .macd: "point.3.connected.trianglepath.dotted"
         case .obv:  "chart.bar.xaxis"
+        case .ma:   "line.diagonal"
         }
     }
 
@@ -38,6 +41,7 @@ enum IndicatorType: String, Codable, CaseIterable, Identifiable {
         case .rsi:  .defaultRSI()
         case .macd: .defaultMACD()
         case .obv:  .defaultOBV()
+        case .ma:   .defaultMA()
         }
     }
 }
@@ -48,6 +52,7 @@ enum IndicatorParameters: Codable, Equatable {
     case rsi(period: Int, overbought: Double, oversold: Double)
     case macd(fastPeriod: Int, slowPeriod: Int, signalPeriod: Int)
     case obv(smoothingPeriod: Int)
+    case ma(fastPeriod: Int, slowPeriod: Int, useEMA: Bool)
 
     // MARK: Defaults
 
@@ -63,6 +68,10 @@ enum IndicatorParameters: Codable, Equatable {
         .obv(smoothingPeriod: 20)
     }
 
+    static func defaultMA() -> IndicatorParameters {
+        .ma(fastPeriod: 10, slowPeriod: 50, useEMA: true)
+    }
+
     // MARK: Summary
 
     var summary: String {
@@ -73,6 +82,27 @@ enum IndicatorParameters: Codable, Equatable {
             "Fast: \(fast), Slow: \(slow), Signal: \(signal)"
         case .obv(let smoothing):
             "Smoothing: \(smoothing)"
+        case .ma(let fast, let slow, let useEMA):
+            "\(useEMA ? "EMA" : "SMA") Fast: \(fast), Slow: \(slow)"
+        }
+    }
+
+    /// Dynamic description of buy/sell signal logic based on current settings.
+    var signalDescription: String {
+        switch self {
+        case .rsi(let period, let overbought, let oversold):
+            return "BUY when \(period)-period RSI crosses below \(Int(oversold)) (oversold). " +
+            "SELL when RSI crosses above \(Int(overbought)) (overbought)."
+        case .macd(let fast, let slow, let signal):
+            return "BUY when MACD line (\(fast)/\(slow)) crosses above the \(signal)-period signal line. " +
+            "SELL when MACD line crosses below the signal line."
+        case .obv(let smoothing):
+            return "BUY when OBV crosses above its \(smoothing)-period moving average. " +
+            "SELL when OBV crosses below its moving average."
+        case .ma(let fast, let slow, let useEMA):
+            let type = useEMA ? "EMA" : "SMA"
+            return "BUY when \(fast)-period \(type) crosses above \(slow)-period \(type). " +
+            "SELL when fast \(type) crosses below slow \(type)."
         }
     }
 }
@@ -89,7 +119,7 @@ final class IndicatorConfig {
     var updatedAt: Date
 
     // Many-to-many inverse (bots that use this indicator)
-    var bots: [BotConfig]?
+    var bots: [BotConfig] = []
 
     // MARK: Computed Properties
 
@@ -117,5 +147,7 @@ final class IndicatorConfig {
         self.parametersData = (try? JSONEncoder().encode(parameters)) ?? Data()
         self.createdAt = Date()
         self.updatedAt = Date()
+        self.bots = []
     }
 }
+
