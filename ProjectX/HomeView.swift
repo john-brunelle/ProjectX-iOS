@@ -1,0 +1,447 @@
+import SwiftUI
+import SwiftData
+
+// ─────────────────────────────────────────────
+// Home Dashboard — Overview Tab
+//
+// Single-screen snapshot of all key app data:
+// market status, account, positions, orders,
+// trades, bots, and live quote. Each card
+// navigates to its full tab on tap.
+// ─────────────────────────────────────────────
+
+struct HomeView: View {
+    @Environment(ProjectXService.self) var service
+    @Environment(RealtimeService.self) var realtime
+    @Environment(BotRunner.self) var botRunner
+
+    @Query(sort: \BotConfig.updatedAt, order: .reverse)
+    private var bots: [BotConfig]
+
+    /// Callback to switch the parent TabView to a specific tab index.
+    var switchToTab: (Int) -> Void
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 16) {
+                    // ── Row 1: Market & Connection ──
+                    statusRow
+
+                    // ── Account ─────────────────────
+                    accountCard
+
+                    // ── Positions ───────────────────
+                    positionsCard
+
+                    // ── Today's P&L ─────────────────
+                    todayPnLCard
+
+                    // ── Open Orders ─────────────────
+                    openOrdersCard
+
+                    // ── Recent Trades ───────────────
+                    recentTradesCard
+
+                    // ── Bots ────────────────────────
+                    botsCard
+
+                    // ── Quick Quote ─────────────────
+                    quoteCard
+                }
+                .padding()
+            }
+            .navigationTitle("Home")
+        }
+    }
+
+    // ═══════════════════════════════════════════
+    // MARK: - Card Builder
+    // ═══════════════════════════════════════════
+
+    @ViewBuilder
+    private func card<Content: View>(
+        _ title: String,
+        systemImage: String,
+        tabIndex: Int,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label(title, systemImage: systemImage)
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+            content()
+        }
+        .padding()
+        .background(.fill.tertiary, in: RoundedRectangle(cornerRadius: 12))
+        .contentShape(Rectangle())
+        .onTapGesture { switchToTab(tabIndex) }
+    }
+
+    // ═══════════════════════════════════════════
+    // MARK: - Status Row (Market + Connection)
+    // ═══════════════════════════════════════════
+
+    private var statusRow: some View {
+        HStack(spacing: 12) {
+            // Market status
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(isMarketOpen ? .green : .red)
+                    .frame(width: 8, height: 8)
+                Text(isMarketOpen ? "Market Open" : "Market Closed")
+                    .font(.caption.weight(.medium))
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(.fill.tertiary, in: Capsule())
+
+            Spacer()
+
+            // Connection indicators
+            HStack(spacing: 8) {
+                connectionDot("User", connected: realtime.isUserConnected)
+                connectionDot("Market", connected: realtime.isMarketConnected)
+            }
+        }
+    }
+
+    private func connectionDot(_ label: String, connected: Bool) -> some View {
+        HStack(spacing: 4) {
+            Circle()
+                .fill(connected ? .green : .gray)
+                .frame(width: 6, height: 6)
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    // ═══════════════════════════════════════════
+    // MARK: - Account Card
+    // ═══════════════════════════════════════════
+
+    private var accountCard: some View {
+        card("Account", systemImage: "person.crop.rectangle", tabIndex: 4) {
+            if let account = service.accounts.first {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(account.name)
+                            .font(.headline)
+                        HStack(spacing: 8) {
+                            Label(
+                                account.canTrade ? "Can Trade" : "No Trading",
+                                systemImage: account.canTrade ? "checkmark.circle.fill" : "xmark.circle.fill"
+                            )
+                            .font(.caption)
+                            .foregroundStyle(account.canTrade ? .green : .red)
+                        }
+                    }
+                    Spacer()
+                    Text(account.balance, format: .currency(code: "USD"))
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(account.balance >= 0 ? .green : .red)
+                }
+            } else {
+                Text("No account loaded")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════
+    // MARK: - Positions Card
+    // ═══════════════════════════════════════════
+
+    private var positionsCard: some View {
+        card("Positions", systemImage: "chart.bar.fill", tabIndex: 6) {
+            if realtime.livePositions.isEmpty {
+                Text("No open positions")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(spacing: 6) {
+                    ForEach(realtime.livePositions) { pos in
+                        HStack {
+                            Text(pos.typeLabel)
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(pos.isLong ? .green : .red)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(
+                                    (pos.isLong ? Color.green : Color.red).opacity(0.15),
+                                    in: Capsule()
+                                )
+                            Text(pos.contractId)
+                                .font(.caption)
+                                .lineLimit(1)
+                            Spacer()
+                            Text("\(pos.size) @ \(String(format: "%.2f", pos.averagePrice))")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════
+    // MARK: - Today's P&L Card
+    // ═══════════════════════════════════════════
+
+    private var todayPnL: Double {
+        realtime.liveTrades
+            .compactMap(\.profitAndLoss)
+            .reduce(0, +)
+    }
+
+    private var todayFees: Double {
+        realtime.liveTrades
+            .map(\.fees)
+            .reduce(0, +)
+    }
+
+    private var todayPnLCard: some View {
+        card("Today's P&L", systemImage: "dollarsign.circle", tabIndex: 7) { // → Trades (7)
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(todayPnL, format: .currency(code: "USD"))
+                        .font(.title2.weight(.bold))
+                        .foregroundStyle(todayPnL >= 0 ? .green : .red)
+                    Text("Fees: \(todayFees, format: .currency(code: "USD"))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Text("\(realtime.liveTrades.count) fills")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════
+    // MARK: - Open Orders Card
+    // ═══════════════════════════════════════════
+
+    private var openOrders: [Order] {
+        realtime.liveOrders.filter { $0.status == 1 }
+    }
+
+    private var openOrdersCard: some View {
+        card("Open Orders", systemImage: "list.bullet.rectangle", tabIndex: 5) {
+            if openOrders.isEmpty {
+                Text("No open orders")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(spacing: 6) {
+                    ForEach(openOrders.prefix(5)) { order in
+                        HStack {
+                            Text(order.sideLabel)
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(order.side == 0 ? .green : .red)
+                            Text(order.typeLabel)
+                                .font(.caption)
+                            Text(order.contractId)
+                                .font(.caption)
+                                .lineLimit(1)
+                            Spacer()
+                            Text("\(order.size)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    if openOrders.count > 5 {
+                        Text("+\(openOrders.count - 5) more")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════
+    // MARK: - Recent Trades Card
+    // ═══════════════════════════════════════════
+
+    private var recentTradesCard: some View {
+        card("Recent Trades", systemImage: "chart.xyaxis.line", tabIndex: 7) { // → Trades (7)
+            if realtime.liveTrades.isEmpty {
+                Text("No trades yet")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(spacing: 6) {
+                    ForEach(realtime.liveTrades.prefix(5)) { trade in
+                        HStack {
+                            Text(trade.sideLabel)
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(trade.side == 0 ? .green : .red)
+                            Text(String(format: "%.2f", trade.price))
+                                .font(.caption)
+                            Spacer()
+                            if let pnl = trade.profitAndLoss {
+                                Text(pnl, format: .currency(code: "USD"))
+                                    .font(.caption.weight(.medium))
+                                    .foregroundStyle(pnl >= 0 ? .green : .red)
+                            } else {
+                                Text("half-turn")
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════
+    // MARK: - Bots Card
+    // ═══════════════════════════════════════════
+
+    private var botsCard: some View {
+        card("Bots", systemImage: "gearshape.2.fill", tabIndex: 2) {
+            if bots.isEmpty {
+                Text("No bots configured")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(spacing: 8) {
+                    ForEach(bots.prefix(5)) { bot in
+                        HStack {
+                            let running = botRunner.isRunning(bot)
+
+                            // Pulsing dot when running
+                            Circle()
+                                .fill(running ? .green : .gray.opacity(0.4))
+                                .frame(width: 8, height: 8)
+
+                            Text(bot.name)
+                                .font(.caption.weight(.medium))
+                                .lineLimit(1)
+
+                            if running, let state = botRunner.runStates[bot.id] {
+                                Text(state.lastSignal == .buy ? "BUY" :
+                                     state.lastSignal == .sell ? "SELL" : "—")
+                                    .font(.caption2.weight(.bold))
+                                    .foregroundStyle(
+                                        state.lastSignal == .buy ? .green :
+                                        state.lastSignal == .sell ? .red : .secondary
+                                    )
+                            }
+
+                            Spacer()
+
+                            // Start / Stop button
+                            Button {
+                                if running {
+                                    botRunner.stop(bot: bot)
+                                } else {
+                                    botRunner.start(bot: bot)
+                                }
+                            } label: {
+                                Image(systemName: running ? "stop.circle.fill" : "play.circle.fill")
+                                    .foregroundStyle(running ? .red : .green)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    if bots.count > 5 {
+                        Text("+\(bots.count - 5) more bots")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════
+    // MARK: - Quick Quote Card
+    // ═══════════════════════════════════════════
+
+    private var quoteCard: some View {
+        card("Quick Quote", systemImage: "dot.radiowaves.left.and.right", tabIndex: 1) { // → Live (1)
+            if let q = realtime.currentQuote {
+                VStack(spacing: 6) {
+                    HStack {
+                        Text(q.symbolName)
+                            .font(.caption.weight(.medium))
+                        Spacer()
+                        Text(String(format: "%.2f", q.lastPrice))
+                            .font(.title3.weight(.bold))
+                    }
+                    HStack {
+                        Text("Bid: \(String(format: "%.2f", q.bestBid))")
+                            .font(.caption2)
+                            .foregroundStyle(.green)
+                        Text("Ask: \(String(format: "%.2f", q.bestAsk))")
+                            .font(.caption2)
+                            .foregroundStyle(.red)
+                        Spacer()
+                        HStack(spacing: 2) {
+                            Image(systemName: q.change >= 0 ? "arrow.up.right" : "arrow.down.right")
+                                .font(.caption2)
+                            Text("\(String(format: "%.2f", q.change)) (\(String(format: "%.2f", q.changePercent))%)")
+                                .font(.caption2)
+                        }
+                        .foregroundStyle(q.change >= 0 ? .green : .red)
+                    }
+                    HStack {
+                        Text("O: \(String(format: "%.2f", q.open))  H: \(String(format: "%.2f", q.high))  L: \(String(format: "%.2f", q.low))")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Text("Vol: \(Int(q.volume))")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            } else {
+                Text("No market data — connect to a contract in the Live tab")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════
+    // MARK: - Market Hours Heuristic
+    // ═══════════════════════════════════════════
+
+    /// CME Globex futures hours: Sunday 5:00 PM – Friday 4:00 PM CT,
+    /// with a daily maintenance break 4:00 PM – 5:00 PM CT (Mon–Thu).
+    private var isMarketOpen: Bool {
+        let ct = TimeZone(identifier: "America/Chicago")!
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = ct
+        let now = Date()
+
+        let weekday = cal.component(.weekday, from: now) // 1=Sun, 7=Sat
+        let hour = cal.component(.hour, from: now)
+        let minute = cal.component(.minute, from: now)
+        let time = hour * 60 + minute // minutes since midnight
+
+        // Saturday: always closed
+        if weekday == 7 { return false }
+
+        // Sunday: open after 5 PM CT (17:00 = 1020 min)
+        if weekday == 1 { return time >= 1020 }
+
+        // Friday: open until 4 PM CT (16:00 = 960 min)
+        if weekday == 6 { return time < 960 }
+
+        // Mon–Thu: open except daily break 4:00 PM – 5:00 PM CT
+        return time < 960 || time >= 1020
+    }
+}

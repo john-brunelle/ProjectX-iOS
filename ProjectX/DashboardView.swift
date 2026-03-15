@@ -5,29 +5,44 @@ struct DashboardView: View {
     @Environment(RealtimeService.self) var realtime
     @Environment(BotRunner.self) var botRunner
 
+    @State private var selectedTab = 0
+
     var body: some View {
-        TabView {
-            AccountsTab()
-                .tabItem { Label("Accounts",  systemImage: "person.crop.rectangle.stack") }
-            ContractsView()
-                .tabItem { Label("Contracts", systemImage: "doc.text.magnifyingglass") }
-            PositionsView()
-                .tabItem { Label("Positions", systemImage: "chart.bar.fill") }
-            OrdersView()
-                .tabItem { Label("Orders",    systemImage: "list.bullet.rectangle") }
-            TradesView()
-                .tabItem { Label("Trades",    systemImage: "chart.xyaxis.line") }
+        TabView(selection: $selectedTab) {
+            HomeView(switchToTab: { selectedTab = $0 })
+                .tabItem { Label("Home",       systemImage: "house.fill") }
+                .tag(0)
             LiveDashboardView()
-                .tabItem { Label("Live",      systemImage: "dot.radiowaves.left.and.right") }
+                .tabItem { Label("Live",       systemImage: "dot.radiowaves.left.and.right") }
+                .tag(1)
+            BotsView()
+                .tabItem { Label("Bots",       systemImage: "gearshape.2.fill") }
+                .badge(botRunner.runningCount)
+                .tag(2)
             IndicatorsView()
                 .tabItem { Label("Indicators", systemImage: "waveform.path.ecg") }
-            BotsView()
-                .tabItem { Label("Bots",      systemImage: "gearshape.2.fill") }
-                .badge(botRunner.runningCount)
+                .tag(3)
+            AccountsTab()
+                .tabItem { Label("Accounts",   systemImage: "person.crop.rectangle.stack") }
+                .tag(4)
+            OrdersView()
+                .tabItem { Label("Orders",     systemImage: "list.bullet.rectangle") }
+                .tag(5)
+            PositionsView()
+                .tabItem { Label("Positions",  systemImage: "chart.bar.fill") }
+                .tag(6)
+            TradesView()
+                .tabItem { Label("Trades",     systemImage: "chart.xyaxis.line") }
+                .tag(7)
             BacktestView()
-                .tabItem { Label("Backtest",  systemImage: "clock.arrow.2.circlepath") }
+                .tabItem { Label("Backtest",   systemImage: "clock.arrow.2.circlepath") }
+                .tag(8)
+            ContractsView()
+                .tabItem { Label("Contracts",  systemImage: "doc.text.magnifyingglass") }
+                .tag(9)
             ThemesView()
-                .tabItem { Label("Themes",    systemImage: "paintbrush.fill") }
+                .tabItem { Label("Themes",     systemImage: "paintbrush.fill") }
+                .tag(10)
         }
         .environment(service)
         .environment(realtime)
