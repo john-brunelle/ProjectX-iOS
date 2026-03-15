@@ -1,8 +1,38 @@
 import SwiftUI
 
 struct DashboardView: View {
-    @EnvironmentObject var service: ProjectXService
-    @State private var isLoading     = false
+    @Environment(ProjectXService.self) var service
+
+    var body: some View {
+        TabView {
+            AccountsTab()
+                .tabItem {
+                    Label("Accounts", systemImage: "person.crop.rectangle.stack")
+                }
+            ContractsView()
+                .tabItem {
+                    Label("Contracts", systemImage: "doc.text.magnifyingglass")
+                }
+            PositionsView()
+                .tabItem {
+                    Label("Positions", systemImage: "chart.bar.fill")
+                }
+            OrdersView()
+                .tabItem {
+                    Label("Orders", systemImage: "list.bullet.rectangle")
+                }
+            TradesView()
+                .tabItem {
+                    Label("Trades", systemImage: "chart.xyaxis.line")
+                }
+        }
+        .environment(service)
+    }
+}
+
+struct AccountsTab: View {
+    @Environment(ProjectXService.self) var service
+    @State private var isLoading      = false
     @State private var showOnlyActive = true
 
     var body: some View {
@@ -77,8 +107,7 @@ struct AccountRow: View {
                     .font(.caption)
                 Label(account.isVisible ? "Visible" : "Hidden",
                       systemImage: account.isVisible ? "eye.fill" : "eye.slash.fill")
-                    .foregroundStyle(.secondary)
-                    .font(.caption)
+                    .foregroundStyle(.secondary).font(.caption)
                 Spacer()
                 Text("ID: \(account.id)").font(.caption2).foregroundStyle(.tertiary)
             }

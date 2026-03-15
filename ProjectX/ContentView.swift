@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct ContentView: View {
-    @EnvironmentObject var service: ProjectXService
+    @Environment(ProjectXService.self) var service
     @State private var isValidating = true
 
     var body: some View {

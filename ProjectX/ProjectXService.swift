@@ -1,19 +1,21 @@
 import Foundation
+import Observation
 
 @MainActor
-class ProjectXService: ObservableObject {
+@Observable
+class ProjectXService {
 
     static let shared = ProjectXService()
 
-    private let baseURL = "https://api.thefuturesdesk.projectx.com"
+    private let baseURL = "https://api.topstepx.com"
 
     private let kUsername = "px_username"
     private let kApiKey   = "px_apikey"
     private let kToken    = "px_token"
 
-    @Published var isAuthenticated = false
-    @Published var accounts: [Account] = []
-    @Published var errorMessage: String?
+    var isAuthenticated = false
+    var accounts: [Account] = []
+    var errorMessage: String?
 
     var savedUsername: String? { KeychainHelper.load(for: kUsername) }
     var savedApiKey:   String? { KeychainHelper.load(for: kApiKey)   }
@@ -74,7 +76,7 @@ class ProjectXService: ObservableObject {
         errorMessage = nil
     }
 
-    private func post<B: Encodable, R: Decodable>(path: String, body: B, token: String?) async -> R? {
+    func post<B: Encodable, R: Decodable>(path: String, body: B, token: String?) async -> R? {
         guard let url = URL(string: baseURL + path) else { return nil }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -83,10 +85,18 @@ class ProjectXService: ObservableObject {
         if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
         do {
             request.httpBody = try JSONEncoder().encode(body)
-            let (data, _) = try await URLSession.shared.data(for: request)
+            let (data, httpResponse) = try await URLSession.shared.data(for: request)
+            if let httpResponse = httpResponse as? HTTPURLResponse {
+                print("ProjectXService [\(path)] HTTP \(httpResponse.statusCode)")
+            }
+            #if DEBUG
+            if let raw = String(data: data, encoding: .utf8) {
+                print("ProjectXService [\(path)] response: \(raw)")
+            }
+            #endif
             return try JSONDecoder().decode(R.self, from: data)
         } catch {
-            print("ProjectXService error: \(error)")
+            print("ProjectXService [\(path)] error: \(error)")
             return nil
         }
     }

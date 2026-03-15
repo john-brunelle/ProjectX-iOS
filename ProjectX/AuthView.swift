@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct AuthView: View {
-    @EnvironmentObject var service: ProjectXService
+    @Environment(ProjectXService.self) var service
 
     @State private var userName  = ""
     @State private var apiKey    = ""
@@ -13,7 +13,9 @@ struct AuthView: View {
                 Section("Credentials") {
                     TextField("Username", text: $userName)
                         .autocorrectionDisabled()
+                        #if os(iOS) || os(visionOS)
                         .textInputAutocapitalization(.never)
+                        #endif
                     SecureField("API Key", text: $apiKey)
                 }
                 Section {
