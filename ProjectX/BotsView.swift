@@ -16,12 +16,21 @@ struct BotsView: View {
     @Query(sort: \BotConfig.updatedAt, order: .reverse)
     private var bots: [BotConfig]
 
+    var isEmbedded: Bool = false
+
     @State private var showWizard = false
     @State private var selectedBot: BotConfig?
 
     var body: some View {
-        NavigationStack {
-            Group {
+        if isEmbedded {
+            content
+        } else {
+            NavigationStack { content }
+        }
+    }
+
+    @ViewBuilder private var content: some View {
+        Group {
                 if bots.isEmpty {
                     ContentUnavailableView(
                         "No Bots Yet",
@@ -55,7 +64,6 @@ struct BotsView: View {
             .sheet(item: $selectedBot) { bot in
                 BotDetailView(bot: bot)
             }
-        }
     }
 
     private func deleteBots(at offsets: IndexSet) {

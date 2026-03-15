@@ -9,7 +9,7 @@ struct DashboardView: View {
 
     var body: some View {
         TabView(selection: $selectedTab) {
-            HomeView(switchToTab: { selectedTab = $0 })
+            HomeView()
                 .tabItem { Label("Home",       systemImage: "house.fill") }
                 .tag(0)
             LiveDashboardView()
@@ -64,55 +64,64 @@ struct AccountsTab: View {
     @Environment(ProjectXService.self) var service
     @Environment(RealtimeService.self) var realtime
     @Environment(BotRunner.self) var botRunner
+
+    var isEmbedded: Bool = false
+
     @State private var isLoading      = false
     @State private var showOnlyActive = true
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if isLoading {
-                    ProgressView("Loading accounts...")
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if service.accounts.isEmpty {
-                    ContentUnavailableView(
-                        "No Accounts Found",
-                        systemImage: "tray",
-                        description: Text("No accounts matched your filter.")
-                    )
-                } else {
-                    List(service.accounts) { account in
-                        AccountRow(account: account)
-                    }
-                }
-            }
-            .navigationTitle("My Accounts")
-            .toolbar {
-                ToolbarItem(placement: .primaryAction) {
-                    Menu {
-                        Toggle("Active accounts only", isOn: $showOnlyActive)
-                            .onChange(of: showOnlyActive) { _, _ in
-                                Task { await reload() }
-                            }
-                        Divider()
-                        Button(role: .destructive) {
-                            botRunner.stopAll()
-                            realtime.disconnectAll()
-                            service.logout()
-                        } label: {
-                            Label("Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
-                    }
-                }
-                ToolbarItem(placement: .navigation) {
-                    Button { Task { await reload() } } label: {
-                        Image(systemName: "arrow.clockwise")
-                    }
-                }
-            }
-            .task { await reload() }
+        if isEmbedded {
+            content
+        } else {
+            NavigationStack { content }
         }
+    }
+
+    @ViewBuilder private var content: some View {
+        Group {
+            if isLoading {
+                ProgressView("Loading accounts...")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if service.accounts.isEmpty {
+                ContentUnavailableView(
+                    "No Accounts Found",
+                    systemImage: "tray",
+                    description: Text("No accounts matched your filter.")
+                )
+            } else {
+                List(service.accounts) { account in
+                    AccountRow(account: account)
+                }
+            }
+        }
+        .navigationTitle("My Accounts")
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Menu {
+                    Toggle("Active accounts only", isOn: $showOnlyActive)
+                        .onChange(of: showOnlyActive) { _, _ in
+                            Task { await reload() }
+                        }
+                    Divider()
+                    Button(role: .destructive) {
+                        botRunner.stopAll()
+                        realtime.disconnectAll()
+                        service.logout()
+                    } label: {
+                        Label("Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+            }
+            ToolbarItem(placement: .navigation) {
+                Button { Task { await reload() } } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+            }
+        }
+        .task { await reload() }
     }
 
     private func reload() async {

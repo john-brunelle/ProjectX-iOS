@@ -6,7 +6,7 @@ struct TradesView: View {
     @State private var trades:          [Trade]  = []
     @State private var isLoading                 = false
     @State private var selectedAccount: Account?
-    @State private var daysBack                  = 7
+    @State private var daysBack                  = 1
 
     // Summary stats
     var completedTrades: [Trade] { trades.filter { !$0.isHalfTurn && !$0.voided } }
@@ -19,9 +19,18 @@ struct TradesView: View {
         return Double(winCount) / Double(completedTrades.count) * 100
     }
 
+    var isEmbedded: Bool = false
+
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
+        if isEmbedded {
+            content
+        } else {
+            NavigationStack { content }
+        }
+    }
+
+    @ViewBuilder private var content: some View {
+        VStack(spacing: 0) {
                 // Account picker
                 if service.accounts.count > 1 {
                     Picker("Account", selection: $selectedAccount) {
@@ -100,7 +109,6 @@ struct TradesView: View {
                 selectedAccount = service.accounts.first
                 await reload()
             }
-        }
     }
 
     private func reload() async {

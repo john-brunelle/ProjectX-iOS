@@ -3,6 +3,8 @@ import SwiftUI
 struct OrdersView: View {
     @Environment(ProjectXService.self) var service
 
+    var isEmbedded: Bool = false
+
     @State private var openOrders:      [Order]  = []
     @State private var historyOrders:   [Order]  = []
     @State private var selectedTab               = 0
@@ -10,8 +12,15 @@ struct OrdersView: View {
     @State private var selectedAccount: Account?
 
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
+        if isEmbedded {
+            content
+        } else {
+            NavigationStack { content }
+        }
+    }
+
+    @ViewBuilder private var content: some View {
+        VStack(spacing: 0) {
                 if service.accounts.count > 1 {
                     Picker("Account", selection: $selectedAccount) {
                         ForEach(service.accounts) { acct in
@@ -81,7 +90,6 @@ struct OrdersView: View {
                 selectedAccount = service.accounts.first
                 await loadAll()
             }
-        }
     }
 
     private func loadAll() async {

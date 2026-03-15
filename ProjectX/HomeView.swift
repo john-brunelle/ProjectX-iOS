@@ -7,8 +7,19 @@ import SwiftData
 // Single-screen snapshot of all key app data:
 // market status, account, positions, orders,
 // trades, bots, and live quote. Each card
-// navigates to its full tab on tap.
+// pushes its destination onto the NavigationStack
+// so the back button returns to Home naturally.
 // ─────────────────────────────────────────────
+
+enum HomeDestination: Hashable {
+    case accounts
+    case positions
+    case orders
+    case trades
+    case bots
+    case live
+    case indicators
+}
 
 struct HomeView: View {
     @Environment(ProjectXService.self) var service
@@ -18,11 +29,10 @@ struct HomeView: View {
     @Query(sort: \BotConfig.updatedAt, order: .reverse)
     private var bots: [BotConfig]
 
-    /// Callback to switch the parent TabView to a specific tab index.
-    var switchToTab: (Int) -> Void
+    @State private var path = NavigationPath()
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             ScrollView {
                 VStack(spacing: 16) {
                     // ── Row 1: Market & Connection ──
@@ -31,11 +41,14 @@ struct HomeView: View {
                     // ── Account ─────────────────────
                     accountCard
 
-                    // ── Positions ───────────────────
-                    positionsCard
-
                     // ── Today's P&L ─────────────────
                     todayPnLCard
+
+                    // ── Bots ────────────────────────
+                    botsCard
+
+                    // ── Positions ───────────────────
+                    positionsCard
 
                     // ── Open Orders ─────────────────
                     openOrdersCard
@@ -43,15 +56,23 @@ struct HomeView: View {
                     // ── Recent Trades ───────────────
                     recentTradesCard
 
-                    // ── Bots ────────────────────────
-                    botsCard
-
                     // ── Quick Quote ─────────────────
                     quoteCard
                 }
                 .padding()
             }
             .navigationTitle("Home")
+            .navigationDestination(for: HomeDestination.self) { destination in
+                switch destination {
+                case .accounts:   AccountsTab(isEmbedded: true)
+                case .positions:  PositionsView(isEmbedded: true)
+                case .orders:     OrdersView(isEmbedded: true)
+                case .trades:     TradesView(isEmbedded: true)
+                case .bots:       BotsView(isEmbedded: true)
+                case .live:       LiveDashboardView(isEmbedded: true)
+                case .indicators: IndicatorsView(isEmbedded: true)
+                }
+            }
         }
     }
 
@@ -63,7 +84,7 @@ struct HomeView: View {
     private func card<Content: View>(
         _ title: String,
         systemImage: String,
-        tabIndex: Int,
+        destination: HomeDestination,
         @ViewBuilder content: () -> Content
     ) -> some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -80,7 +101,7 @@ struct HomeView: View {
         .padding()
         .background(.fill.tertiary, in: RoundedRectangle(cornerRadius: 12))
         .contentShape(Rectangle())
-        .onTapGesture { switchToTab(tabIndex) }
+        .onTapGesture { path.append(destination) }
     }
 
     // ═══════════════════════════════════════════
@@ -127,7 +148,7 @@ struct HomeView: View {
     // ═══════════════════════════════════════════
 
     private var accountCard: some View {
-        card("Account", systemImage: "person.crop.rectangle", tabIndex: 4) {
+        card("Account", systemImage: "person.crop.rectangle", destination: .accounts) {
             if let account = service.accounts.first {
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
@@ -160,7 +181,7 @@ struct HomeView: View {
     // ═══════════════════════════════════════════
 
     private var positionsCard: some View {
-        card("Positions", systemImage: "chart.bar.fill", tabIndex: 6) {
+        card("Positions", systemImage: "chart.bar.fill", destination: .positions) {
             if realtime.livePositions.isEmpty {
                 Text("No open positions")
                     .font(.caption)
@@ -209,7 +230,7 @@ struct HomeView: View {
     }
 
     private var todayPnLCard: some View {
-        card("Today's P&L", systemImage: "dollarsign.circle", tabIndex: 7) { // → Trades (7)
+        card("Today's P&L", systemImage: "dollarsign.circle", destination: .trades) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(todayPnL, format: .currency(code: "USD"))
@@ -236,7 +257,7 @@ struct HomeView: View {
     }
 
     private var openOrdersCard: some View {
-        card("Open Orders", systemImage: "list.bullet.rectangle", tabIndex: 5) {
+        card("Open Orders", systemImage: "list.bullet.rectangle", destination: .orders) {
             if openOrders.isEmpty {
                 Text("No open orders")
                     .font(.caption)
@@ -274,7 +295,7 @@ struct HomeView: View {
     // ═══════════════════════════════════════════
 
     private var recentTradesCard: some View {
-        card("Recent Trades", systemImage: "chart.xyaxis.line", tabIndex: 7) { // → Trades (7)
+        card("Recent Trades", systemImage: "chart.xyaxis.line", destination: .trades) {
             if realtime.liveTrades.isEmpty {
                 Text("No trades yet")
                     .font(.caption)
@@ -310,7 +331,7 @@ struct HomeView: View {
     // ═══════════════════════════════════════════
 
     private var botsCard: some View {
-        card("Bots", systemImage: "gearshape.2.fill", tabIndex: 2) {
+        card("Bots", systemImage: "gearshape.2.fill", destination: .bots) {
             if bots.isEmpty {
                 Text("No bots configured")
                     .font(.caption)
@@ -371,7 +392,7 @@ struct HomeView: View {
     // ═══════════════════════════════════════════
 
     private var quoteCard: some View {
-        card("Quick Quote", systemImage: "dot.radiowaves.left.and.right", tabIndex: 1) { // → Live (1)
+        card("Quick Quote", systemImage: "dot.radiowaves.left.and.right", destination: .live) {
             if let q = realtime.currentQuote {
                 VStack(spacing: 6) {
                     HStack {

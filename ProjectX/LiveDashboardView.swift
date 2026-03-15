@@ -10,11 +10,20 @@ import SwiftUI
 struct LiveDashboardView: View {
     @Environment(RealtimeService.self) var realtime
 
+    var isEmbedded: Bool = false
+
     @State private var selectedTab = 0
 
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
+        if isEmbedded {
+            content
+        } else {
+            NavigationStack { content }
+        }
+    }
+
+    @ViewBuilder private var content: some View {
+        VStack(spacing: 0) {
                 // Status bar
                 HStack {
                     ConnectionBadge(isConnected: realtime.isUserConnected)
@@ -46,7 +55,6 @@ struct LiveDashboardView: View {
                 }
             }
             .navigationTitle("Live")
-        }
     }
 
     // ── Live Positions ────────────────────────

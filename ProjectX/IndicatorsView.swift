@@ -19,10 +19,19 @@ struct IndicatorsView: View {
 
     /// When non-nil, shows a "Done" button (used when presented as a sheet from BacktestView).
     var onDone: (() -> Void)? = nil
+    /// When true, skips the NavigationStack wrapper (used when pushed from HomeView).
+    var isEmbedded: Bool = false
 
     var body: some View {
-        NavigationStack {
-            Group {
+        if isEmbedded {
+            content
+        } else {
+            NavigationStack { content }
+        }
+    }
+
+    @ViewBuilder private var content: some View {
+        Group {
                 if indicators.isEmpty {
                     ContentUnavailableView(
                         "No Indicators",
@@ -64,7 +73,6 @@ struct IndicatorsView: View {
             .sheet(item: $selectedIndicator) { indicator in
                 IndicatorEditorView(existing: indicator)
             }
-        }
     }
 
     private func deleteIndicators(at offsets: IndexSet) {

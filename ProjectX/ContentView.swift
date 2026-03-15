@@ -28,7 +28,12 @@ struct ContentView: View {
             }
         }
         .task {
-            _ = await service.validateAndRefreshToken()
+            let ok = await service.validateAndRefreshToken()
+            if ok {
+                // Pre-fetch accounts so every tab has data immediately
+                // without requiring the user to visit the Accounts tab first.
+                await service.fetchAccounts()
+            }
             isValidating = false
             // Splash dismisses itself after animation completes
             // so we don't force-dismiss it here

@@ -3,6 +3,8 @@ import SwiftUI
 struct PositionsView: View {
     @Environment(ProjectXService.self) var service
 
+    var isEmbedded: Bool = false
+
     @State private var positions:       [Position] = []
     @State private var isLoading                   = false
     @State private var selectedAccount: Account?
@@ -11,8 +13,15 @@ struct PositionsView: View {
     @State private var partialCloseSize             = 1
 
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
+        if isEmbedded {
+            content
+        } else {
+            NavigationStack { content }
+        }
+    }
+
+    @ViewBuilder private var content: some View {
+        VStack(spacing: 0) {
                 // Account picker
                 if service.accounts.count > 1 {
                     Picker("Account", selection: $selectedAccount) {
@@ -117,7 +126,6 @@ struct PositionsView: View {
                     )
                 }
             }
-        }
     }
 
     private func reload() async {
