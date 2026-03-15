@@ -3,6 +3,7 @@ import SwiftUI
 struct DashboardView: View {
     @Environment(ProjectXService.self) var service
     @Environment(RealtimeService.self) var realtime
+    @Environment(BotRunner.self) var botRunner
 
     var body: some View {
         TabView {
@@ -22,11 +23,13 @@ struct DashboardView: View {
                 .tabItem { Label("Indicators", systemImage: "waveform.path.ecg") }
             BotsView()
                 .tabItem { Label("Bots",      systemImage: "gearshape.2.fill") }
+                .badge(botRunner.runningCount)
             ThemesView()
                 .tabItem { Label("Themes",    systemImage: "paintbrush.fill") }
         }
         .environment(service)
         .environment(realtime)
+        .environment(botRunner)
         .onAppear {
             // Auto-connect user hub when dashboard loads
             if let account = service.accounts.first {
@@ -34,6 +37,7 @@ struct DashboardView: View {
             }
         }
         .onDisappear {
+            botRunner.stopAll()
             realtime.disconnectAll()
         }
     }
@@ -42,6 +46,7 @@ struct DashboardView: View {
 struct AccountsTab: View {
     @Environment(ProjectXService.self) var service
     @Environment(RealtimeService.self) var realtime
+    @Environment(BotRunner.self) var botRunner
     @State private var isLoading      = false
     @State private var showOnlyActive = true
 
@@ -73,6 +78,7 @@ struct AccountsTab: View {
                             }
                         Divider()
                         Button(role: .destructive) {
+                            botRunner.stopAll()
                             realtime.disconnectAll()
                             service.logout()
                         } label: {
