@@ -18,6 +18,8 @@ struct DashboardView: View {
                 .tabItem { Label("Trades",    systemImage: "chart.xyaxis.line") }
             LiveDashboardView()
                 .tabItem { Label("Live",      systemImage: "dot.radiowaves.left.and.right") }
+            ThemesView()
+                .tabItem { Label("Themes",    systemImage: "paintbrush.fill") }
         }
         .environment(service)
         .environment(realtime)

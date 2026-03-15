@@ -16,18 +16,20 @@ import Lottie
 
 struct SplashView: View {
     @Binding var isShowingSplash: Bool
+    @Environment(ThemeManager.self) var themeManager
 
     @State private var titleOpacity:   Double = 0
     @State private var taglineOpacity: Double = 0
     @State private var splashOpacity:  Double = 1
 
     var body: some View {
+        let palette = themeManager.palette
         ZStack {
             // Background gradient
             LinearGradient(
                 colors: [
-                    Color(red: 0.05, green: 0.08, blue: 0.15),
-                    Color(red: 0.02, green: 0.04, blue: 0.10)
+                    palette.background,
+                    palette.background.opacity(0.8)
                 ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
@@ -48,12 +50,12 @@ struct SplashView: View {
                 VStack(spacing: 8) {
                     Text("ProjectX")
                         .font(.system(size: 38, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(palette.textPrimary)
                         .opacity(titleOpacity)
 
                     Text("Professional Futures Trading")
                         .font(.system(size: 15, weight: .medium))
-                        .foregroundStyle(Color(red: 0.18, green: 0.8, blue: 0.44))
+                        .foregroundStyle(palette.accent)
                         .opacity(taglineOpacity)
                 }
                 .padding(.top, 24)
@@ -63,7 +65,7 @@ struct SplashView: View {
                 // ── Bottom branding ───────────
                 Text("Powered by ProjectX Gateway API")
                     .font(.caption2)
-                    .foregroundStyle(.white.opacity(0.3))
+                    .foregroundStyle(palette.textSecondary.opacity(0.3))
                     .padding(.bottom, 40)
                     .opacity(taglineOpacity)
             }
