@@ -295,7 +295,7 @@ class BotRunner {
             type: .market,
             side: side,
             size: bot.quantity,
-            customTag: "bot-\(botId.uuidString.prefix(8))",
+            customTag: "bot-\(botId.uuidString.prefix(8))-\(UUID().uuidString.prefix(8))",
             stopLoss: stopLoss,
             takeProfit: takeProfit
         )
@@ -307,8 +307,12 @@ class BotRunner {
             logToState(botId: botId, type: .order,
                        message: "Placed \(side.label) order #\(orderId) (qty: \(bot.quantity))")
         } else {
+            let errorMsg = service.errorMessage ?? "unknown error"
             logToState(botId: botId, type: .error,
-                       message: "Order placement failed: \(service.errorMessage ?? "unknown error")")
+                       message: "Order placement failed: \(errorMsg)")
+            logToState(botId: botId, type: .info,
+                       message: "Stopping bot due to order error")
+            stop(bot: bot)
             bot.status = .error
             bot.updatedAt = Date()
         }

@@ -32,6 +32,7 @@ struct HomeView: View {
     @State private var path = NavigationPath()
     @State private var showStopAllConfirmation = false
     @State private var showNuclearConfirmation = false
+    @State private var showStopActions = false
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -447,33 +448,42 @@ struct HomeView: View {
                     if botRunner.runningCount > 0 {
                         Divider()
 
-                        // Stop bots only
-                        Button(role: .destructive) {
-                            showStopAllConfirmation = true
-                        } label: {
-                            Label(
-                                "Stop All Bots (\(botRunner.runningCount) Running)",
-                                systemImage: "stop.circle.fill"
-                            )
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.red)
-                            .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.plain)
+                        DisclosureGroup(isExpanded: $showStopActions) {
+                            VStack(spacing: 8) {
+                                // Stop bots only
+                                Button(role: .destructive) {
+                                    showStopAllConfirmation = true
+                                } label: {
+                                    Label(
+                                        "Stop All Bots (\(botRunner.runningCount) Running)",
+                                        systemImage: "stop.circle.fill"
+                                    )
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.red)
+                                    .frame(maxWidth: .infinity)
+                                }
+                                .buttonStyle(.plain)
 
-                        // Nuclear stop — bots + orders + positions
-                        Button(role: .destructive) {
-                            showNuclearConfirmation = true
+                                // Nuclear stop — bots + orders + positions
+                                Button(role: .destructive) {
+                                    showNuclearConfirmation = true
+                                } label: {
+                                    Label(
+                                        "Nuclear Stop — Bots, Orders & Positions",
+                                        systemImage: "exclamationmark.octagon.fill"
+                                    )
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.orange)
+                                    .frame(maxWidth: .infinity)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                            .padding(.top, 6)
                         } label: {
-                            Label(
-                                "Nuclear Stop — Bots, Orders & Positions",
-                                systemImage: "exclamationmark.octagon.fill"
-                            )
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.orange)
-                            .frame(maxWidth: .infinity)
+                            Text("Stop Actions")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
                         }
-                        .buttonStyle(.plain)
                     }
                 }
             }
