@@ -175,18 +175,24 @@ struct BotDetailView: View {
                         .font(.headline)
                 }
             } else {
+                let conflictBot = botRunner.runningBotName(
+                    on: bot.contractId, accountId: bot.accountId, excluding: bot.id)
                 Button {
                     botRunner.start(bot: bot)
                 } label: {
                     Label("Start Bot", systemImage: "play.circle.fill")
                         .font(.headline)
-                        .foregroundStyle(.green)
+                        .foregroundStyle(bot.indicators.isEmpty || conflictBot != nil ? .gray : .green)
                 }
-                .disabled(bot.indicators.isEmpty)
+                .disabled(bot.indicators.isEmpty || conflictBot != nil)
             }
         } footer: {
             if bot.indicators.isEmpty {
                 Text("Add at least one indicator before starting.")
+                    .foregroundStyle(.orange)
+            } else if let conflictBot = botRunner.runningBotName(
+                on: bot.contractId, accountId: bot.accountId, excluding: bot.id) {
+                Text("\"\(conflictBot)\" is already running on \(bot.contractName). Only one bot per contract is allowed.")
                     .foregroundStyle(.orange)
             }
         }

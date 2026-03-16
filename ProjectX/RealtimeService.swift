@@ -48,7 +48,7 @@ class RealtimeService {
     var domEntries:     [DOMEntry]    = []
 
     private var subscribedAccountId:  Int?
-    private var subscribedContractId: String?
+    private(set) var subscribedContractId: String?
 
     // ─────────────────────────────────────────
     // MARK: User Hub
@@ -106,6 +106,43 @@ class RealtimeService {
         conn.invoke(method: "SubscribeOrders",    accountId) { _ in }
         conn.invoke(method: "SubscribePositions", accountId) { _ in }
         conn.invoke(method: "SubscribeTrades",    accountId) { _ in }
+
+        // Seed initial state — SignalR only delivers future updates, not existing data
+        Task { await fetchInitialUserData(accountId: accountId) }
+    }
+
+    private func fetchInitialUserData(accountId: Int) async {
+        async let orders    = ProjectXService.shared.searchOpenOrders(accountId: accountId)
+        async let positions = ProjectXService.shared.searchOpenPositions(accountId: accountId)
+        async let trades    = ProjectXService.shared.searchTrades(accountId: accountId,
+                                                                   startTimestamp: Self.sessionStart())
+        let (fetchedOrders, fetchedPositions, fetchedTrades) = await (orders, positions, trades)
+
+        // Replace: ensures clean, accurate state on every connect/reconnect
+        liveOrders    = fetchedOrders
+        livePositions = fetchedPositions
+        liveTrades    = Array(fetchedTrades.prefix(200))
+
+    }
+
+    // ── Manual refresh (pull-to-refresh on HomeView) ──
+
+    /// Re-fetches open positions, open orders, and today's trades.
+    /// Called from HomeView's pull-to-refresh gesture.
+    func refreshHomeData() async {
+        guard let accountId = subscribedAccountId else { return }
+
+        // Refresh account balance alongside trades/orders/positions
+        async let acctRefresh      = ProjectXService.shared.fetchAccounts()
+        async let fetchedOrders    = ProjectXService.shared.searchOpenOrders(accountId: accountId)
+        async let fetchedPositions = ProjectXService.shared.searchOpenPositions(accountId: accountId)
+        async let fetchedTrades    = ProjectXService.shared.searchTrades(accountId: accountId,
+                                                                          startTimestamp: Self.sessionStart())
+        let (_, orders, positions, trades) = await (acctRefresh, fetchedOrders, fetchedPositions, fetchedTrades)
+
+        liveOrders    = orders
+        livePositions = positions
+        liveTrades    = trades
     }
 
     private func unsubscribeUserHub() {
@@ -457,6 +494,26 @@ class RealtimeService {
         marketConnection?.stop()
         marketConnection  = nil
         isMarketConnected = false
+    }
+
+    // ── CME session start ─────────────────────
+
+    /// Returns the start of the current CME Globex trading session.
+    /// CME sessions open at 5:00 PM CT and run until 4:00 PM CT the next day.
+    /// Trades between 5 PM CT yesterday and midnight are part of "today's" session
+    /// but would be missed if we used calendar midnight as the boundary.
+    static func sessionStart(for date: Date = Date()) -> Date {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "America/Chicago")!
+        let hour = cal.component(.hour, from: date)
+        // Before 5 PM CT → session started yesterday at 17:00 CT
+        // At or after 5 PM CT → session started today at 17:00 CT
+        let sessionDay = hour < 17
+            ? cal.date(byAdding: .day, value: -1, to: date)!
+            : date
+        var comps = cal.dateComponents([.year, .month, .day], from: sessionDay)
+        comps.hour = 17; comps.minute = 0; comps.second = 0
+        return cal.date(from: comps) ?? date
     }
 }
 

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct PositionsView: View {
     @Environment(ProjectXService.self) var service
+    @Environment(RealtimeService.self) var realtime
 
     var isEmbedded: Bool = false
 
@@ -49,14 +50,9 @@ struct PositionsView: View {
                 } else {
                     // Summary bar
                     HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Total P&L").font(.caption).foregroundStyle(.secondary)
-                            Text("N/A — requires realtime feed")
-                                .font(.caption2).foregroundStyle(.tertiary)
-                        }
-                        Spacer()
                         Text("\(positions.count) position\(positions.count == 1 ? "" : "s")")
                             .font(.caption).foregroundStyle(.secondary)
+                        Spacer()
                     }
                     .padding(.horizontal)
                     .padding(.vertical, 8)
@@ -128,6 +124,8 @@ struct PositionsView: View {
             }
     }
 
+    // ── Data loading ──────────────────────────
+
     private func reload() async {
         guard let account = selectedAccount else { return }
         isLoading = true
@@ -174,6 +172,7 @@ struct PositionRow: View {
                 Spacer()
                 Text("Qty: \(position.size)")
                     .font(.subheadline).fontWeight(.medium)
+                    .foregroundStyle(.secondary)
             }
             HStack(spacing: 16) {
                 Label("Avg: \(position.averagePrice, specifier: "%.2f")",

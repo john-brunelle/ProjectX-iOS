@@ -10,8 +10,9 @@ struct TradesView: View {
 
     // Summary stats
     var completedTrades: [Trade] { trades.filter { !$0.isHalfTurn && !$0.voided } }
-    var totalPnL:        Double  { completedTrades.compactMap { $0.profitAndLoss }.reduce(0, +) }
+    var grossPnL:        Double  { completedTrades.compactMap { $0.profitAndLoss }.reduce(0, +) }
     var totalFees:       Double  { trades.map { $0.fees }.reduce(0, +) }
+    var netPnL:          Double  { grossPnL - totalFees }
     var winCount:        Int     { completedTrades.filter { ($0.profitAndLoss ?? 0) > 0 }.count }
     var lossCount:       Int     { completedTrades.filter { ($0.profitAndLoss ?? 0) < 0 }.count }
     var winRate:         Double  {
@@ -64,8 +65,8 @@ struct TradesView: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 12) {
                         StatCard(title: "Net P&L",
-                                 value: String(format: "$%.2f", totalPnL),
-                                 color: totalPnL >= 0 ? .green : .red)
+                                 value: String(format: "$%.2f", netPnL),
+                                 color: netPnL >= 0 ? .green : .red)
                         StatCard(title: "Win Rate",
                                  value: String(format: "%.0f%%", winRate),
                                  color: winRate >= 50 ? .green : .orange)
@@ -114,7 +115,11 @@ struct TradesView: View {
     private func reload() async {
         guard let account = selectedAccount else { return }
         isLoading = true
-        let start = Calendar.current.date(byAdding: .day, value: -daysBack, to: Date())!
+        // "Today" uses the CME session start (5 PM CT yesterday) so it matches
+        // the broker's session P&L. Other periods use a rolling day offset.
+        let start = daysBack == 1
+            ? RealtimeService.sessionStart()
+            : Calendar.current.date(byAdding: .day, value: -daysBack, to: Date())!
         trades = await service.searchTrades(
             accountId:      account.id,
             startTimestamp: start,

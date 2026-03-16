@@ -60,6 +60,24 @@ struct HomeView: View {
                 }
                 .padding()
             }
+            .refreshable {
+                await realtime.refreshHomeData()
+            }
+            .task {
+                while !Task.isCancelled {
+                    await realtime.refreshHomeData()
+                    try? await Task.sleep(for: .seconds(15))
+                }
+            }
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        Task { await realtime.refreshHomeData() }
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                }
+            }
             .navigationTitle("Home")
             .navigationDestination(for: HomeDestination.self) { destination in
                 switch destination {
@@ -227,7 +245,7 @@ struct HomeView: View {
                                 .lineLimit(1)
                             Spacer()
                             Text("\(pos.size) @ \(String(format: "%.2f", pos.averagePrice))")
-                                .font(.caption)
+                                .font(.caption2)
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -240,31 +258,41 @@ struct HomeView: View {
     // MARK: - Today's P&L Card
     // ═══════════════════════════════════════════
 
-    private var todayPnL: Double {
-        realtime.liveTrades
-            .compactMap(\.profitAndLoss)
-            .reduce(0, +)
+    /// Completed trades: non-voided, non-half-turn (has a P&L value).
+    /// Matches TradesView's definition so the numbers stay in sync.
+    private var completedTrades: [Trade] {
+        realtime.liveTrades.filter { !$0.voided && $0.profitAndLoss != nil }
+    }
+
+    private var todayGrossPnL: Double {
+        completedTrades.compactMap(\.profitAndLoss).reduce(0, +)
     }
 
     private var todayFees: Double {
-        realtime.liveTrades
-            .map(\.fees)
-            .reduce(0, +)
+        realtime.liveTrades.map(\.fees).reduce(0, +)
+    }
+
+    /// Net P&L = Gross P&L − Fees (matches broker/backend figure)
+    private var todayNetPnL: Double {
+        todayGrossPnL - todayFees
     }
 
     private var todayPnLCard: some View {
         card("Today's P&L", systemImage: "dollarsign.circle", destination: .trades) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(todayPnL, format: .currency(code: "USD"))
+                    Text(todayNetPnL, format: .currency(code: "USD"))
                         .font(.title2.weight(.bold))
-                        .foregroundStyle(todayPnL >= 0 ? .green : .red)
-                    Text("Fees: \(todayFees, format: .currency(code: "USD"))")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(todayNetPnL >= 0 ? .green : .red)
+                    HStack(spacing: 12) {
+                        Text("Gross: \(todayGrossPnL, format: .currency(code: "USD"))")
+                        Text("Fees: \(todayFees, format: .currency(code: "USD"))")
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 }
                 Spacer()
-                Text("\(realtime.liveTrades.count) fills")
+                Text("\(completedTrades.count) fills")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -328,6 +356,8 @@ struct HomeView: View {
                     ForEach(bots.prefix(5)) { bot in
                         let running = botRunner.isRunning(bot)
                         let state = botRunner.runStates[bot.id]
+                        let conflictBot = running ? nil : botRunner.runningBotName(
+                            on: bot.contractId, accountId: bot.accountId, excluding: bot.id)
 
                         VStack(alignment: .leading, spacing: 4) {
                             HStack {
@@ -365,9 +395,17 @@ struct HomeView: View {
                                     }
                                 } label: {
                                     Image(systemName: running ? "stop.circle.fill" : "play.circle.fill")
-                                        .foregroundStyle(running ? .red : .green)
+                                        .foregroundStyle(running ? .red : (conflictBot != nil ? .gray : .green))
                                 }
                                 .buttonStyle(.plain)
+                                .disabled(conflictBot != nil)
+                            }
+
+                            // Conflict hint
+                            if let conflictBot {
+                                Text("\"\(conflictBot)\" is already running on this contract")
+                                    .font(.caption2)
+                                    .foregroundStyle(.orange)
                             }
 
                             // P&L line

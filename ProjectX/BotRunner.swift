@@ -58,6 +58,28 @@ class BotRunner {
         runStates.values.filter { $0.task != nil && !($0.task?.isCancelled ?? true) }.count
     }
 
+    /// Returns the name of a currently-running bot on the given contract/account, or nil.
+    /// Used by UI to disable start buttons and show hints.
+    func runningBotName(on contractId: String, accountId: Int, excluding botId: UUID) -> String? {
+        for (id, state) in runStates where id != botId {
+            guard let task = state.task, !task.isCancelled else { continue }
+            // We need the bot's contract — stored when we log the start
+            if let info = runningBotInfo[id],
+               info.contractId == contractId && info.accountId == accountId {
+                return info.name
+            }
+        }
+        return nil
+    }
+
+    /// Lightweight info kept per running bot so we can query contract/account without holding BotConfig.
+    private struct RunningBotInfo {
+        let contractId: String
+        let accountId: Int
+        let name: String
+    }
+    private var runningBotInfo: [UUID: RunningBotInfo] = [:]
+
     private init() {}
 
     // MARK: - Lifecycle
@@ -68,11 +90,23 @@ class BotRunner {
             return
         }
 
+        // Prevent multiple bots on the same contract/account
+        if let conflictName = runningBotName(on: bot.contractId, accountId: bot.accountId, excluding: bot.id) {
+            logToState(botId: bot.id, type: .error,
+                       message: "Cannot start: \"\(conflictName)\" is already running on \(bot.contractName)")
+            return
+        }
+
         // Initialize or reset run state
         stop(bot: bot)
 
         bot.status = .running
         bot.updatedAt = Date()
+
+        // Track contract info for conflict detection
+        runningBotInfo[bot.id] = RunningBotInfo(contractId: bot.contractId,
+                                                 accountId: bot.accountId,
+                                                 name: bot.name)
 
         var state = BotRunState()
         log(botId: bot.id, type: .info, message: "Bot started", state: &state)
@@ -107,6 +141,8 @@ class BotRunner {
             runStates[botId] = updated
         }
 
+        runningBotInfo.removeValue(forKey: botId)
+
         if bot.status == .running {
             bot.status = .stopped
             bot.updatedAt = Date()
@@ -121,6 +157,7 @@ class BotRunner {
             log(botId: botId, type: .info, message: "Bot stopped (stop all)", state: &updated)
             runStates[botId] = updated
         }
+        runningBotInfo.removeAll()
     }
 
     /// Nuclear stop: halts all bots, cancels every open order,
