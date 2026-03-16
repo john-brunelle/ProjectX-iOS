@@ -89,6 +89,10 @@ struct OrdersView: View {
             .task {
                 selectedAccount = service.accounts.first
                 await loadAll()
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(15))
+                    await loadAll()
+                }
             }
     }
 

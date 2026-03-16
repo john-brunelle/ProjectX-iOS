@@ -85,6 +85,11 @@ class BotRunner {
     // MARK: - Lifecycle
 
     func start(bot: BotConfig) {
+        guard bot.isActive else {
+            logToState(botId: bot.id, type: .error, message: "Cannot start: bot is inactive")
+            return
+        }
+
         guard !bot.indicators.isEmpty else {
             logToState(botId: bot.id, type: .error, message: "Cannot start: no indicators configured")
             return

@@ -59,7 +59,13 @@ struct PositionsView: View {
                     .background(Color(uiColor: .secondarySystemBackground))
 
                     List(positions) { position in
-                        PositionRow(position: position)
+                        PositionRow(position: position, onClose: {
+                            positionToClose = position
+                        }, onPartialClose: {
+                            positionToClose = position
+                            partialCloseSize = 1
+                            showPartialClose = true
+                        })
                             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                                 Button(role: .destructive) {
                                     positionToClose = position
@@ -90,6 +96,10 @@ struct PositionsView: View {
             .task {
                 selectedAccount = service.accounts.first
                 await reload()
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(15))
+                    await reload()
+                }
             }
             // Close all confirmation
             .confirmationDialog(
@@ -135,6 +145,13 @@ struct PositionsView: View {
 
     private func closePosition() async {
         guard let account = selectedAccount, let position = positionToClose else { return }
+        // Cancel any open orders on this contract first (bracket SL/TP)
+        let openOrders = await service.searchOpenOrders(accountId: account.id)
+        let bracketOrders = openOrders.filter { $0.contractId == position.contractId && $0.status == 1 }
+        for order in bracketOrders {
+            _ = await service.cancelOrder(accountId: account.id, orderId: order.id)
+        }
+        // Then close the position
         let ok = await service.closePosition(accountId: account.id, contractId: position.contractId)
         positionToClose = nil
         if ok { await reload() }
@@ -156,6 +173,8 @@ struct PositionsView: View {
 
 struct PositionRow: View {
     let position: Position
+    var onClose: (() -> Void)? = nil
+    var onPartialClose: (() -> Void)? = nil
 
     var typeColor: Color { position.isLong ? .green : .red }
 
@@ -182,8 +201,37 @@ struct PositionRow: View {
                 Text("ID: \(position.id)")
                     .font(.caption2).foregroundStyle(.tertiary)
             }
-            Text("Opened: \(formattedTime(position.creationTimestamp))")
-                .font(.caption2).foregroundStyle(.tertiary)
+            HStack {
+                Text("Opened: \(formattedTime(position.creationTimestamp))")
+                    .font(.caption2).foregroundStyle(.tertiary)
+                Spacer()
+                if let onPartialClose {
+                    Button {
+                        onPartialClose()
+                    } label: {
+                        Text("Partial")
+                            .font(.caption2).fontWeight(.medium)
+                            .padding(.horizontal, 8).padding(.vertical, 4)
+                            .background(.orange.opacity(0.12))
+                            .foregroundStyle(.orange)
+                            .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
+                if let onClose {
+                    Button {
+                        onClose()
+                    } label: {
+                        Text("Close")
+                            .font(.caption2).fontWeight(.medium)
+                            .padding(.horizontal, 8).padding(.vertical, 4)
+                            .background(.red.opacity(0.12))
+                            .foregroundStyle(.red)
+                            .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
         }
         .padding(.vertical, 4)
     }

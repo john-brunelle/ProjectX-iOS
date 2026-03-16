@@ -13,8 +13,15 @@ struct BotsView: View {
     @Environment(ProjectXService.self) var service
     @Environment(BotRunner.self) var botRunner
 
-    @Query(sort: \BotConfig.updatedAt, order: .reverse)
-    private var bots: [BotConfig]
+    @Query(sort: \BotConfig.name)
+    private var botsRaw: [BotConfig]
+
+    private var bots: [BotConfig] {
+        botsRaw.sorted { a, b in
+            if a.isActive != b.isActive { return a.isActive }
+            return a.name.localizedCompare(b.name) == .orderedAscending
+        }
+    }
 
     var isEmbedded: Bool = false
 
@@ -135,6 +142,14 @@ struct BotRow: View {
                 Text(bot.name)
                     .font(.headline)
                 Spacer()
+                Button {
+                    bot.isActive.toggle()
+                    bot.updatedAt = Date()
+                } label: {
+                    Image(systemName: bot.isActive ? "checkmark.circle.fill" : "circle.dashed")
+                        .foregroundStyle(bot.isActive ? .green : .orange)
+                }
+                .buttonStyle(.plain)
                 Label(bot.status.displayName, systemImage: bot.status.systemImage)
                     .font(.caption)
                     .foregroundStyle(statusColor)
@@ -197,6 +212,7 @@ struct BotRow: View {
             }
         }
         .padding(.vertical, 4)
+        .opacity(bot.isActive ? 1.0 : 0.6)
     }
 
     private func formatPnL(_ value: Double) -> String {

@@ -146,6 +146,17 @@ struct BotDetailView: View {
 
     @ViewBuilder
     private var statusSections: some View {
+        // ── Active Toggle ───────────────────
+        Section {
+            Toggle("Active", isOn: Bindable(bot).isActive)
+                .disabled(isRunning)
+        } footer: {
+            if !bot.isActive {
+                Text("Inactive bots cannot be started and are hidden from the Home dashboard.")
+                    .foregroundStyle(.orange)
+            }
+        }
+
         // ── Running Lock Banner ──────────────
         if isRunning {
             Section {
@@ -182,12 +193,15 @@ struct BotDetailView: View {
                 } label: {
                     Label("Start Bot", systemImage: "play.circle.fill")
                         .font(.headline)
-                        .foregroundStyle(bot.indicators.isEmpty || conflictBot != nil ? .gray : .green)
+                        .foregroundStyle(bot.indicators.isEmpty || conflictBot != nil || !bot.isActive ? .gray : .green)
                 }
-                .disabled(bot.indicators.isEmpty || conflictBot != nil)
+                .disabled(bot.indicators.isEmpty || conflictBot != nil || !bot.isActive)
             }
         } footer: {
-            if bot.indicators.isEmpty {
+            if !bot.isActive {
+                Text("Activate this bot before starting.")
+                    .foregroundStyle(.orange)
+            } else if bot.indicators.isEmpty {
                 Text("Add at least one indicator before starting.")
                     .foregroundStyle(.orange)
             } else if let conflictBot = botRunner.runningBotName(

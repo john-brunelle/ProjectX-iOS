@@ -78,6 +78,7 @@ final class BotConfig {
     var tradeDirectionRaw: String  // TradeDirectionFilter raw value
 
     // Status
+    var isActive: Bool = true
     var statusRaw: String
 
     // Timestamps

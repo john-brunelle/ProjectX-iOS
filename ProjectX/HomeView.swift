@@ -353,7 +353,7 @@ struct HomeView: View {
                     .foregroundStyle(.secondary)
             } else {
                 VStack(spacing: 10) {
-                    ForEach(bots.prefix(5)) { bot in
+                    ForEach(bots.filter(\.isActive).sorted { a, _ in botRunner.isRunning(a) }.prefix(5)) { bot in
                         let running = botRunner.isRunning(bot)
                         let state = botRunner.runStates[bot.id]
                         let conflictBot = running ? nil : botRunner.runningBotName(
@@ -437,8 +437,9 @@ struct HomeView: View {
                             .font(.caption2)
                         }
                     }
-                    if bots.count > 5 {
-                        Text("+\(bots.count - 5) more bots")
+                    let activeBots = bots.filter(\.isActive)
+                    if activeBots.count > 5 {
+                        Text("+\(activeBots.count - 5) more bots")
                             .font(.caption2)
                             .foregroundStyle(.tertiary)
                     }
