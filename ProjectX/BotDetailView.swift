@@ -55,6 +55,7 @@ struct BotDetailView: View {
 
     // ── Other UI state ──
     @State private var showDeleteConfirmation = false
+    @State private var showClearLogConfirmation = false
 
     private var runState: BotRunState? { botRunner.runStates[bot.id] }
     private var isRunning: Bool { botRunner.isRunning(bot) }
@@ -253,10 +254,45 @@ struct BotDetailView: View {
 
         // ── Activity Log ─────────────────────
         if let state = runState, !state.log.isEmpty {
-            Section("Activity Log") {
-                ForEach(state.log.prefix(50)) { entry in
-                    BotLogRow(entry: entry)
+            Section {
+                let entries = Array(state.log.prefix(50))
+                if entries.count > 10 {
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 0) {
+                            ForEach(entries) { entry in
+                                BotLogRow(entry: entry)
+                                    .padding(.vertical, 2)
+                                Divider()
+                            }
+                        }
+                    }
+                    .frame(maxHeight: 320)
+                } else {
+                    ForEach(entries) { entry in
+                        BotLogRow(entry: entry)
+                    }
                 }
+            } header: {
+                HStack {
+                    Text("Activity Log")
+                    Spacer()
+                    Button(role: .destructive) {
+                        showClearLogConfirmation = true
+                    } label: {
+                        Text("Clear")
+                            .font(.caption)
+                            .textCase(nil)
+                    }
+                }
+            }
+            .confirmationDialog("Clear Activity Log?",
+                                isPresented: $showClearLogConfirmation,
+                                titleVisibility: .visible) {
+                Button("Clear Log", role: .destructive) {
+                    botRunner.clearLog(for: bot.id)
+                }
+            } message: {
+                Text("This will permanently delete all log entries for this bot.")
             }
         }
     }
@@ -304,7 +340,7 @@ struct BotDetailView: View {
             }
             .disabled(isRunning)
 
-            Stepper("Unit Number: \(barUnitNumber)", value: $barUnitNumber, in: 1...60)
+            Stepper("Time Value: \(barUnitNumber)", value: $barUnitNumber, in: 1...60)
                 .disabled(isRunning)
         }
     }

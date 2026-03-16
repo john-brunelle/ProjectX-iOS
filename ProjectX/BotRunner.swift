@@ -1,4 +1,5 @@
 import Foundation
+import SwiftData
 
 // ─────────────────────────────────────────────
 // Bot Runner — Live Trading Engine
@@ -20,11 +21,29 @@ enum BotLogType: String {
 }
 
 struct BotLogEntry: Identifiable {
-    let id = UUID()
+    let id: UUID
     let timestamp: Date
     let botId: UUID
     let type: BotLogType
     let message: String
+
+    /// New entry — generates a fresh id.
+    init(timestamp: Date, botId: UUID, type: BotLogType, message: String) {
+        self.id        = UUID()
+        self.timestamp = timestamp
+        self.botId     = botId
+        self.type      = type
+        self.message   = message
+    }
+
+    /// Reconstructed from a persisted record — preserves the original id.
+    init(id: UUID, timestamp: Date, botId: UUID, type: BotLogType, message: String) {
+        self.id        = id
+        self.timestamp = timestamp
+        self.botId     = botId
+        self.type      = type
+        self.message   = message
+    }
 }
 
 // MARK: - Per-Bot Runtime State
@@ -80,6 +99,9 @@ class BotRunner {
     }
     private var runningBotInfo: [UUID: RunningBotInfo] = [:]
 
+    /// Injected by DashboardView before any restore/start calls.
+    var modelContext: ModelContext?
+
     private init() {}
 
     // MARK: - Lifecycle
@@ -104,6 +126,9 @@ class BotRunner {
 
         // Initialize or reset run state
         stop(bot: bot)
+
+        // Clear persisted log — this is a fresh start, not a restore
+        clearPersistedLog(for: bot.id)
 
         bot.status = .running
         bot.updatedAt = Date()
@@ -198,6 +223,56 @@ class BotRunner {
 
     func isRunning(_ bot: BotConfig) -> Bool {
         bot.status == .running
+    }
+
+    /// Clears the in-memory log and deletes all persisted records for the bot.
+    func clearLog(for botId: UUID) {
+        if var state = runStates[botId] {
+            state.log = []
+            runStates[botId] = state
+        }
+        clearPersistedLog(for: botId)
+    }
+
+    /// Called once on app launch to restart any bots whose persisted
+    /// status is `.running` — their in-memory tasks were lost on kill.
+    /// Preserves the persisted activity log rather than flushing it.
+    func restoreRunningBots(_ bots: [BotConfig]) {
+        for bot in bots where bot.status == .running {
+            restoreBot(bot)
+        }
+    }
+
+    /// Resumes a bot after a cold start without clearing its activity log.
+    private func restoreBot(_ bot: BotConfig) {
+        guard bot.isActive, !bot.indicators.isEmpty else { return }
+
+        let botId = bot.id
+
+        // Cancel any orphaned task just in case
+        runStates[botId]?.task?.cancel()
+
+        runningBotInfo[botId] = RunningBotInfo(contractId: bot.contractId,
+                                               accountId: bot.accountId,
+                                               name: bot.name)
+
+        // Reload the persisted log so history survives cold starts
+        var state = BotRunState()
+        state.log = loadPersistedLog(for: botId)
+        log(botId: botId, type: .info, message: "Bot resumed after app restart", state: &state)
+
+        state.task = Task { [weak self] in
+            guard let self else { return }
+            await self.pollLoop(bot: bot)
+            await MainActor.run {
+                if bot.status == .running {
+                    bot.status = .stopped
+                    bot.updatedAt = Date()
+                }
+            }
+        }
+
+        runStates[botId] = state
     }
 
     // MARK: - Polling Loop
@@ -357,6 +432,44 @@ class BotRunner {
         if state.log.count > 200 {
             state.log = Array(state.log.prefix(200))
         }
+        insertLogRecord(entry)
+    }
+
+    // MARK: - Log Persistence (SwiftData)
+
+    private func insertLogRecord(_ entry: BotLogEntry) {
+        guard let ctx = modelContext else { return }
+        ctx.insert(BotLogEntryRecord(entry: entry))
+        trimLogRecords(botId: entry.botId, in: ctx)
+        try? ctx.save()
+    }
+
+    /// Keeps only the 200 most-recent records for a given bot.
+    private func trimLogRecords(botId: UUID, in ctx: ModelContext) {
+        let descriptor = FetchDescriptor<BotLogEntryRecord>(
+            predicate: #Predicate { $0.botId == botId },
+            sortBy:    [SortDescriptor(\.timestamp, order: .reverse)]
+        )
+        guard let all = try? ctx.fetch(descriptor), all.count > 200 else { return }
+        Array(all.dropFirst(200)).forEach { ctx.delete($0) }
+    }
+
+    private func loadPersistedLog(for botId: UUID) -> [BotLogEntry] {
+        guard let ctx = modelContext else { return [] }
+        let descriptor = FetchDescriptor<BotLogEntryRecord>(
+            predicate: #Predicate { $0.botId == botId },
+            sortBy:    [SortDescriptor(\.timestamp, order: .reverse)]
+        )
+        return ((try? ctx.fetch(descriptor)) ?? []).map { $0.asLogEntry() }
+    }
+
+    private func clearPersistedLog(for botId: UUID) {
+        guard let ctx = modelContext else { return }
+        let descriptor = FetchDescriptor<BotLogEntryRecord>(
+            predicate: #Predicate { $0.botId == botId }
+        )
+        ((try? ctx.fetch(descriptor)) ?? []).forEach { ctx.delete($0) }
+        try? ctx.save()
     }
 
     private func logToState(botId: UUID, type: BotLogType, message: String) {

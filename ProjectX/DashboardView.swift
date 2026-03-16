@@ -1,9 +1,13 @@
 import SwiftUI
+import SwiftData
 
 struct DashboardView: View {
     @Environment(ProjectXService.self) var service
     @Environment(RealtimeService.self) var realtime
     @Environment(BotRunner.self) var botRunner
+
+    @Query private var allBots: [BotConfig]
+    @Environment(\.modelContext) private var modelContext
 
     @State private var selectedTab = 0
 
@@ -48,10 +52,14 @@ struct DashboardView: View {
         .environment(realtime)
         .environment(botRunner)
         .onAppear {
+            // Inject model context before any bot restore/persistence calls
+            botRunner.modelContext = modelContext
             // Auto-connect user hub when dashboard loads
             if let account = service.accounts.first {
                 realtime.connectUserHub(accountId: account.id)
             }
+            // Restart any bots that were running before a cold start/kill
+            botRunner.restoreRunningBots(allBots)
         }
         .onDisappear {
             botRunner.stopAll()

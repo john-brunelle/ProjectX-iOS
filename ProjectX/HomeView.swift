@@ -445,44 +445,56 @@ struct HomeView: View {
                             .foregroundStyle(.tertiary)
                     }
 
-                    if botRunner.runningCount > 0 {
-                        Divider()
+                    Divider()
 
-                        DisclosureGroup(isExpanded: $showStopActions) {
-                            VStack(spacing: 8) {
-                                // Stop bots only
-                                Button(role: .destructive) {
-                                    showStopAllConfirmation = true
-                                } label: {
-                                    Label(
-                                        "Stop All Bots (\(botRunner.runningCount) Running)",
-                                        systemImage: "stop.circle.fill"
-                                    )
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(.red)
-                                    .frame(maxWidth: .infinity)
-                                }
-                                .buttonStyle(.plain)
+                    // Disclosure header — always visible
+                    HStack {
+                        Text("Stop Actions")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .rotationEffect(.degrees(showStopActions ? 90 : 0))
+                            .animation(.easeInOut(duration: 0.2), value: showStopActions)
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        withAnimation { showStopActions.toggle() }
+                    }
 
-                                // Nuclear stop — bots + orders + positions
-                                Button(role: .destructive) {
-                                    showNuclearConfirmation = true
-                                } label: {
-                                    Label(
-                                        "Nuclear Stop — Bots, Orders & Positions",
-                                        systemImage: "exclamationmark.octagon.fill"
-                                    )
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(.orange)
-                                    .frame(maxWidth: .infinity)
-                                }
-                                .buttonStyle(.plain)
-                            }
-                            .padding(.top, 6)
-                        } label: {
-                            Text("Stop Actions")
+                    if showStopActions {
+                        VStack(spacing: 8) {
+                            // Stop bots only
+                            Button(role: .destructive) {
+                                showStopAllConfirmation = true
+                            } label: {
+                                Label(
+                                    "Stop All Bots (\(botRunner.runningCount) Running)",
+                                    systemImage: "stop.circle.fill"
+                                )
                                 .font(.caption.weight(.semibold))
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(botRunner.runningCount > 0 ? .red : .secondary)
+                                .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(botRunner.runningCount == 0)
+
+                            // Nuclear stop — bots + orders + positions
+                            Button(role: .destructive) {
+                                showNuclearConfirmation = true
+                            } label: {
+                                Label(
+                                    "Nuclear Stop — Bots, Orders & Positions",
+                                    systemImage: "exclamationmark.octagon.fill"
+                                )
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(botRunner.runningCount > 0 ? .orange : .secondary)
+                                .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(botRunner.runningCount == 0)
                         }
                     }
                 }

@@ -274,12 +274,12 @@ struct BotWizardView: View {
                         Text(unit.label).tag(unit)
                     }
                 }
-                Stepper("Unit Number: \(barUnitNumber)", value: $barUnitNumber, in: 1...60)
+                Stepper("Time Value: \(barUnitNumber)", value: $barUnitNumber, in: 1...60)
             }
 
             Section {
                 let label = barUnitNumber == 1 ? barUnit.label : "\(barUnitNumber) \(barUnit.label)"
-                Text("The bot will analyze **\(label)** bars to evaluate indicator signals.")
+                Text("The bot will analyze **\(label)**     bars to evaluate indicator signals.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
