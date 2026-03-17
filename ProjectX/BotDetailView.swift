@@ -54,7 +54,7 @@ struct BotDetailView: View {
     @State private var backtestBarCount = 0
 
     // ── Other UI state ──
-    @State private var showDeleteConfirmation = false
+    @State private var showArchiveConfirmation = false
     @State private var showClearLogConfirmation = false
 
     private var runState: BotRunState? { botRunner.runStates[bot.id] }
@@ -115,15 +115,18 @@ struct BotDetailView: View {
             .sheet(item: $editingIndicator) { indicator in
                 IndicatorEditorView(existing: indicator)
             }
-            .confirmationDialog("Delete Bot?", isPresented: $showDeleteConfirmation) {
-                Button("Delete", role: .destructive) {
+            .confirmationDialog("Archive Bot?", isPresented: $showArchiveConfirmation) {
+                Button("Archive", role: .destructive) {
                     if isRunning { botRunner.stop(bot: bot) }
-                    modelContext.delete(bot)
+                    bot.isArchived = true
+                    bot.isActive = false
+                    bot.updatedAt = Date()
+                    try? modelContext.save()
                     dismiss()
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("This will permanently delete \"\(bot.name)\". This action cannot be undone.")
+                Text("Archive \"\(bot.name)\"? It will be hidden from the dashboard but kept in your bot library.")
             }
             .onAppear { loadFromBot() }
         }
@@ -456,17 +459,27 @@ struct BotDetailView: View {
             }
             .disabled(isRunning)
 
-            Button(role: .destructive) {
-                showDeleteConfirmation = true
-            } label: {
-                Label("Delete Bot", systemImage: "trash")
+            if bot.isArchived {
+                Button {
+                    bot.isArchived = false
+                    bot.updatedAt = Date()
+                    try? modelContext.save()
+                } label: {
+                    Label("Unarchive Bot", systemImage: "arrow.uturn.backward")
+                }
+            } else {
+                Button(role: .destructive) {
+                    showArchiveConfirmation = true
+                } label: {
+                    Label("Archive Bot", systemImage: "archivebox")
+                }
+                .disabled(isRunning)
             }
-            .disabled(isRunning)
         } header: {
             Text("Actions")
         } footer: {
             if isRunning {
-                Text("Stop the bot before editing or deleting.")
+                Text("Stop the bot before editing or archiving.")
                     .foregroundStyle(.orange)
             }
         }

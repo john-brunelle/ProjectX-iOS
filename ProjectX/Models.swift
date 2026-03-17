@@ -25,6 +25,7 @@ struct Account: Codable, Identifiable, Hashable {
     let balance: Double
     let canTrade: Bool
     let isVisible: Bool
+    let simulated: Bool?   // nil-safe: older API responses may omit this field
 }
 
 struct AccountSearchRequest: Codable {

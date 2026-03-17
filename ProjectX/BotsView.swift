@@ -8,6 +8,12 @@ import SwiftData
 // "+" opens the bot creation wizard.
 // ─────────────────────────────────────────────
 
+private enum BotFilter: String, CaseIterable {
+    case active   = "Active"
+    case inactive = "Inactive"
+    case archived = "Archived"
+}
+
 struct BotsView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(ProjectXService.self) var service
@@ -16,19 +22,26 @@ struct BotsView: View {
     @Query(sort: \BotConfig.name)
     private var botsRaw: [BotConfig]
 
-    private var bots: [BotConfig] {
-        botsRaw.sorted { a, b in
-            if a.isActive != b.isActive { return a.isActive }
-            return a.name.localizedCompare(b.name) == .orderedAscending
-        }
-    }
-
     var isEmbedded: Bool = false
 
+    @State private var filter: BotFilter = .active
     @State private var showWizard = false
     @State private var selectedBot: BotConfig?
     @State private var showStopAllConfirmation = false
     @State private var showNuclearConfirmation = false
+
+    private var filteredBots: [BotConfig] {
+        let base: [BotConfig]
+        switch filter {
+        case .active:   base = botsRaw.filter {  $0.isActive && !$0.isArchived }
+        case .inactive: base = botsRaw.filter { !$0.isActive && !$0.isArchived }
+        case .archived: base = botsRaw.filter {  $0.isArchived }
+        }
+        return base.sorted { a, b in
+            if filter == .active, a.isActive != b.isActive { return a.isActive }
+            return a.name.localizedCompare(b.name) == .orderedAscending
+        }
+    }
 
     var body: some View {
         if isEmbedded {
@@ -40,23 +53,60 @@ struct BotsView: View {
 
     @ViewBuilder private var content: some View {
         Group {
-                if bots.isEmpty {
-                    ContentUnavailableView(
-                        "No Bots Yet",
-                        systemImage: "gearshape.2.fill",
-                        description: Text("Tap + to create your first trading bot.")
-                    )
-                } else {
-                    List {
-                        ForEach(bots) { bot in
-                            BotRow(bot: bot, runState: botRunner.runStates[bot.id])
-                                .contentShape(Rectangle())
-                                .onTapGesture { selectedBot = bot }
+            if botsRaw.isEmpty {
+                ContentUnavailableView(
+                    "No Bots Yet",
+                    systemImage: "gearshape.2.fill",
+                    description: Text("Tap + to create your first trading bot.")
+                )
+            } else {
+                List {
+                    Section {
+                        Picker("Filter", selection: $filter) {
+                            ForEach(BotFilter.allCases, id: \.self) { f in
+                                Text(f.rawValue).tag(f)
+                            }
                         }
-                        .onDelete(perform: deleteBots)
+                        .pickerStyle(.segmented)
+                        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                    }
+
+                    if filteredBots.isEmpty {
+                        Section {
+                            Text(emptyMessage)
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .center)
+                                .padding(.vertical, 8)
+                        }
+                    } else {
+                        Section {
+                            ForEach(filteredBots) { bot in
+                                BotRow(bot: bot, runState: botRunner.runStates[bot.id])
+                                    .contentShape(Rectangle())
+                                    .onTapGesture { selectedBot = bot }
+                                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                        if filter == .archived {
+                                            Button {
+                                                unarchiveBot(bot)
+                                            } label: {
+                                                Label("Unarchive", systemImage: "arrow.uturn.backward")
+                                            }
+                                            .tint(.blue)
+                                        } else {
+                                            Button(role: .destructive) {
+                                                archiveBot(bot)
+                                            } label: {
+                                                Label("Archive", systemImage: "archivebox")
+                                            }
+                                        }
+                                    }
+                            }
+                        }
                     }
                 }
             }
+        }
             .navigationTitle("Bots")
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
@@ -118,15 +168,26 @@ struct BotsView: View {
             }
     }
 
-    private func deleteBots(at offsets: IndexSet) {
-        for index in offsets {
-            let bot = bots[index]
-            // Stop running bots before deleting
-            if botRunner.isRunning(bot) {
-                botRunner.stop(bot: bot)
-            }
-            modelContext.delete(bot)
+    private var emptyMessage: String {
+        switch filter {
+        case .active:   return "No active bots. Create one with + or activate an existing bot."
+        case .inactive: return "No inactive bots."
+        case .archived: return "No archived bots."
         }
+    }
+
+    private func archiveBot(_ bot: BotConfig) {
+        if botRunner.isRunning(bot) { botRunner.stop(bot: bot) }
+        bot.isArchived = true
+        bot.isActive = false
+        bot.updatedAt = Date()
+        try? modelContext.save()
+    }
+
+    private func unarchiveBot(_ bot: BotConfig) {
+        bot.isArchived = false
+        bot.updatedAt = Date()
+        try? modelContext.save()
     }
 }
 

@@ -193,7 +193,7 @@ class RealtimeService {
             let canTrade  = try data.getArgument(type: Bool.self)
             let isVisible = try data.getArgument(type: Bool.self)
             let updated = Account(id: id, name: name, balance: balance,
-                                  canTrade: canTrade, isVisible: isVisible)
+                                  canTrade: canTrade, isVisible: isVisible, simulated: nil)
             Task { @MainActor in
                 if let idx = self.liveAccounts.firstIndex(where: { $0.id == id }) {
                     self.liveAccounts[idx] = updated

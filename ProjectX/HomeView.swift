@@ -29,6 +29,8 @@ struct HomeView: View {
     @Query(sort: \BotConfig.updatedAt, order: .reverse)
     private var bots: [BotConfig]
 
+    @Query private var allProfiles: [AccountProfile]
+
     @State private var path = NavigationPath()
     @State private var showStopAllConfirmation = false
     @State private var showNuclearConfirmation = false
@@ -192,10 +194,28 @@ struct HomeView: View {
     private var accountCard: some View {
         card("Account", systemImage: "person.crop.rectangle", destination: .accounts) {
             if let account = service.activeAccount {
-                HStack {
+                let alias = allProfiles.first { $0.accountId == account.id }?.alias ?? ""
+                let displayName = {
+                    let trimmed = alias.trimmingCharacters(in: .whitespaces)
+                    return trimmed.isEmpty ? account.name : trimmed
+                }()
+
+                HStack(spacing: 12) {
+                    AccountAvatar(accountId: account.id, size: 48)
+
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(account.name)
-                            .font(.headline)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(displayName)
+                                .font(.headline)
+                                .lineLimit(1)
+                            if !alias.trimmingCharacters(in: .whitespaces).isEmpty {
+                                Text(account.name)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                        }
+
                         HStack(spacing: 8) {
                             Label(
                                 account.canTrade ? "Can Trade" : "No Trading",
@@ -348,13 +368,14 @@ struct HomeView: View {
 
     private var botsCard: some View {
         card("Bots", systemImage: "gearshape.2.fill", destination: .bots) {
-            if bots.isEmpty {
-                Text("No bots configured")
+            let accountBots = bots.filter { $0.accountId == service.activeAccount?.id && !$0.isArchived }
+            if accountBots.isEmpty {
+                Text("No bots for this account")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
                 VStack(spacing: 10) {
-                    ForEach(bots.filter(\.isActive).sorted { a, _ in botRunner.isRunning(a) }.prefix(5)) { bot in
+                    ForEach(accountBots.filter(\.isActive).sorted { a, _ in botRunner.isRunning(a) }.prefix(5)) { bot in
                         let running = botRunner.isRunning(bot)
                         let state = botRunner.runStates[bot.id]
                         let conflictBot = running ? nil : botRunner.runningBotName(
@@ -438,7 +459,7 @@ struct HomeView: View {
                             .font(.caption2)
                         }
                     }
-                    let activeBots = bots.filter(\.isActive)
+                    let activeBots = accountBots.filter(\.isActive)
                     if activeBots.count > 5 {
                         Text("+\(activeBots.count - 5) more bots")
                             .font(.caption2)

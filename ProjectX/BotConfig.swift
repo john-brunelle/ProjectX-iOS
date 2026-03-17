@@ -79,6 +79,7 @@ final class BotConfig {
 
     // Status
     var isActive: Bool = true
+    var isArchived: Bool = false
     var statusRaw: String
 
     // Timestamps
