@@ -19,6 +19,6 @@ struct ProjectXApp: App {
                 .environment(networkLogger)
                 .preferredColorScheme(themeManager.preferredColorScheme)
         }
-        .modelContainer(for: [IndicatorConfig.self, BotConfig.self, BotLogEntryRecord.self, AccountProfile.self])
+        .modelContainer(for: [IndicatorConfig.self, BotConfig.self, BotLogEntryRecord.self, AccountProfile.self, AccountBotAssignment.self])
     }
 }

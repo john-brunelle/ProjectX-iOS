@@ -30,11 +30,16 @@ struct HomeView: View {
     private var bots: [BotConfig]
 
     @Query private var allProfiles: [AccountProfile]
+    @Query private var allAssignments: [AccountBotAssignment]
+
+    @Environment(\.modelContext) private var modelContext
 
     @State private var path = NavigationPath()
     @State private var showStopAllConfirmation = false
     @State private var showNuclearConfirmation = false
     @State private var showStopActions = false
+    @State private var showAddBotSheet = false
+    @State private var conflictHintBotId: UUID?
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -118,6 +123,18 @@ struct HomeView: View {
         } message: {
             Text("This will stop all bots, cancel every open order, and close every open position. This cannot be undone.")
         }
+        .onChange(of: botRunner.runningCount) { old, new in
+            if old == 0 && new > 0 {
+                withAnimation { showStopActions = true }
+            } else if new == 0 {
+                showStopActions = false
+            }
+        }
+        .sheet(isPresented: $showAddBotSheet) {
+            if let accountId = service.activeAccount?.id {
+                BotAssignmentSheet(accountId: accountId)
+            }
+        }
     }
 
     // ═══════════════════════════════════════════
@@ -131,7 +148,7 @@ struct HomeView: View {
         destination: HomeDestination,
         @ViewBuilder content: () -> Content
     ) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Label(title, systemImage: systemImage)
                     .font(.subheadline.weight(.semibold))
@@ -366,20 +383,27 @@ struct HomeView: View {
     // MARK: - Bots Card
     // ═══════════════════════════════════════════
 
+    /// Bot IDs assigned to the currently active account.
+    private var activeAccountBotIds: Set<UUID> {
+        guard let accountId = service.activeAccount?.id else { return [] }
+        return Set(allAssignments.filter { $0.accountId == accountId }.map(\.botId))
+    }
+
     private var botsCard: some View {
         card("Bots", systemImage: "gearshape.2.fill", destination: .bots) {
-            let accountBots = bots.filter { $0.accountId == service.activeAccount?.id && !$0.isArchived }
+            let accountBots = bots.filter { activeAccountBotIds.contains($0.id) && !$0.isArchived }
             if accountBots.isEmpty {
                 Text("No bots for this account")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
-                VStack(spacing: 10) {
+                VStack(spacing: 14) {
                     ForEach(accountBots.filter(\.isActive).sorted { a, _ in botRunner.isRunning(a) }.prefix(5)) { bot in
                         let running = botRunner.isRunning(bot)
                         let state = botRunner.runStates[bot.id]
+                        let activeAccountId = service.activeAccount?.id ?? 0
                         let conflictBot = running ? nil : botRunner.runningBotName(
-                            on: bot.contractId, accountId: bot.accountId, excluding: bot.id)
+                            on: bot.contractId, accountId: activeAccountId, excluding: bot.id)
 
                         VStack(alignment: .leading, spacing: 4) {
                             HStack {
@@ -389,10 +413,10 @@ struct HomeView: View {
                                     .frame(width: 8, height: 8)
 
                                 Text(bot.name)
-                                    .font(.caption.weight(.medium))
+                                    .font(.subheadline.weight(.semibold))
                                     .lineLimit(1)
                                 Text(bot.contractName)
-                                    .font(.caption2)
+                                    .font(.caption)
                                     .foregroundStyle(.secondary)
                                     .lineLimit(1)
 
@@ -409,25 +433,41 @@ struct HomeView: View {
                                 Spacer()
 
                                 // Start / Stop button
-                                Button {
-                                    if running {
-                                        botRunner.stop(bot: bot)
-                                    } else {
-                                        botRunner.start(bot: bot)
+                                if conflictBot != nil {
+                                    Button {
+                                        withAnimation {
+                                            conflictHintBotId = conflictHintBotId == bot.id ? nil : bot.id
+                                        }
+                                    } label: {
+                                        Image(systemName: "play.circle.fill")
+                                            .foregroundStyle(.gray)
                                     }
-                                } label: {
-                                    Image(systemName: running ? "stop.circle.fill" : "play.circle.fill")
-                                        .foregroundStyle(running ? .red : (conflictBot != nil ? .gray : .green))
+                                    .buttonStyle(.plain)
+                                } else {
+                                    Button {
+                                        if running {
+                                            botRunner.stop(bot: bot)
+                                        } else {
+                                            botRunner.start(bot: bot, accountId: activeAccountId)
+                                        }
+                                    } label: {
+                                        Image(systemName: running ? "stop.circle.fill" : "play.circle.fill")
+                                            .foregroundStyle(running ? .red : .green)
+                                    }
+                                    .buttonStyle(.plain)
                                 }
-                                .buttonStyle(.plain)
-                                .disabled(conflictBot != nil)
                             }
 
-                            // Conflict hint
-                            if let conflictBot {
+                            // Conflict hint — shown on tap of disabled start button
+                            if conflictHintBotId == bot.id, let conflictBot {
                                 Text("\"\(conflictBot)\" is already running on this contract")
                                     .font(.caption2)
                                     .foregroundStyle(.orange)
+                                    .transition(.opacity.combined(with: .move(edge: .top)))
+                                    .task(id: conflictHintBotId) {
+                                        try? await Task.sleep(for: .seconds(3))
+                                        withAnimation { conflictHintBotId = nil }
+                                    }
                             }
 
                             // P&L line
@@ -436,11 +476,13 @@ struct HomeView: View {
                                 if running, let state {
                                     HStack(spacing: 3) {
                                         Text("Session:")
+                                            .font(.caption)
                                             .foregroundStyle(.secondary)
                                         Text(formatPnL(state.sessionPnL))
+                                            .font(.caption.weight(.semibold))
                                             .foregroundStyle(state.sessionPnL >= 0 ? .green : .red)
-                                            .fontWeight(.semibold)
                                         Text("(\(state.sessionTradeCount))")
+                                            .font(.caption2)
                                             .foregroundStyle(.tertiary)
                                     }
                                 }
@@ -448,15 +490,16 @@ struct HomeView: View {
                                 // Lifetime
                                 HStack(spacing: 3) {
                                     Text(running ? "Lifetime:" : "All Time:")
+                                        .font(.caption)
                                         .foregroundStyle(.secondary)
                                     Text(formatPnL(bot.lifetimePnL))
+                                        .font(.caption.weight(.semibold))
                                         .foregroundStyle(bot.lifetimePnL >= 0 ? .green : .red)
-                                        .fontWeight(.semibold)
                                     Text("(\(bot.lifetimeTradeCount))")
+                                        .font(.caption2)
                                         .foregroundStyle(.tertiary)
                                 }
                             }
-                            .font(.caption2)
                         }
                     }
                     let activeBots = accountBots.filter(\.isActive)
@@ -466,58 +509,70 @@ struct HomeView: View {
                             .foregroundStyle(.tertiary)
                     }
 
-                    Divider()
+                    if botRunner.runningCount > 0 {
+                        Divider()
 
-                    // Disclosure header — always visible
-                    HStack {
-                        Text("Stop Actions")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        Image(systemName: "chevron.right")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                            .rotationEffect(.degrees(showStopActions ? 90 : 0))
-                            .animation(.easeInOut(duration: 0.2), value: showStopActions)
-                    }
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        withAnimation { showStopActions.toggle() }
-                    }
-
-                    if showStopActions {
-                        VStack(spacing: 8) {
-                            // Stop bots only
-                            Button(role: .destructive) {
-                                showStopAllConfirmation = true
-                            } label: {
-                                Label(
-                                    "Stop All Bots (\(botRunner.runningCount) Running)",
-                                    systemImage: "stop.circle.fill"
-                                )
+                        // Disclosure header — visible only when bots are running
+                        HStack {
+                            Text("Stop Actions")
                                 .font(.caption.weight(.semibold))
-                                .foregroundStyle(botRunner.runningCount > 0 ? .red : .secondary)
-                                .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(.plain)
-                            .disabled(botRunner.runningCount == 0)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                                .rotationEffect(.degrees(showStopActions ? 90 : 0))
+                                .animation(.easeInOut(duration: 0.2), value: showStopActions)
+                        }
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            withAnimation { showStopActions.toggle() }
+                        }
 
-                            // Nuclear stop — bots + orders + positions
-                            Button(role: .destructive) {
-                                showNuclearConfirmation = true
-                            } label: {
-                                Label(
-                                    "Nuclear Stop — Bots, Orders & Positions",
-                                    systemImage: "exclamationmark.octagon.fill"
-                                )
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(botRunner.runningCount > 0 ? .orange : .secondary)
-                                .frame(maxWidth: .infinity)
+                        if showStopActions {
+                            VStack(spacing: 8) {
+                                // Stop bots only
+                                Button(role: .destructive) {
+                                    showStopAllConfirmation = true
+                                } label: {
+                                    Label(
+                                        "Stop All Bots (\(botRunner.runningCount) Running)",
+                                        systemImage: "stop.circle.fill"
+                                    )
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.red)
+                                    .frame(maxWidth: .infinity)
+                                }
+                                .buttonStyle(.plain)
+
+                                // Nuclear stop — bots + orders + positions
+                                Button(role: .destructive) {
+                                    showNuclearConfirmation = true
+                                } label: {
+                                    Label(
+                                        "Nuclear Stop — Bots, Orders & Positions",
+                                        systemImage: "exclamationmark.octagon.fill"
+                                    )
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.orange)
+                                    .frame(maxWidth: .infinity)
+                                }
+                                .buttonStyle(.plain)
                             }
-                            .buttonStyle(.plain)
-                            .disabled(botRunner.runningCount == 0)
                         }
                     }
+
+                    Divider()
+
+                    Button {
+                        showAddBotSheet = true
+                    } label: {
+                        Label("Add Bot", systemImage: "plus.circle.fill")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.blue)
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.plain)
                 }
             }
         }

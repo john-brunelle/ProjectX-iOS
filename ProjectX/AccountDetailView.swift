@@ -13,11 +13,15 @@ struct AccountDetailView: View {
 
     @Environment(\.modelContext) private var modelContext
     @Environment(ProjectXService.self)  var service
+    @Environment(BotRunner.self) var botRunner
 
     // Query only the profile for this account
     @Query private var profiles: [AccountProfile]
+    @Query private var assignments: [AccountBotAssignment]
+    @Query(sort: \BotConfig.name) private var allBots: [BotConfig]
 
     @State private var alias = ""
+    @State private var showAddBotSheet = false
     @FocusState private var aliasFocused: Bool
 
     private var profile: AccountProfile? { profiles.first }
@@ -31,6 +35,7 @@ struct AccountDetailView: View {
         self.account = account
         let id = account.id
         _profiles = Query(filter: #Predicate<AccountProfile> { $0.accountId == id })
+        _assignments = Query(filter: #Predicate<AccountBotAssignment> { $0.accountId == id })
     }
 
     var body: some View {
@@ -142,12 +147,64 @@ struct AccountDetailView: View {
                 }
             }
 
+            // ── Bots ────────────────────────────
+            Section {
+                let assignedBotIds = Set(assignments.map(\.botId))
+                let assignedBots = allBots.filter { assignedBotIds.contains($0.id) && !$0.isArchived }
+
+                if assignedBots.isEmpty {
+                    Text("No bots assigned to this account.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(assignedBots) { bot in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(bot.name)
+                                    .font(.body.weight(.medium))
+                                Text(bot.contractName)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            if botRunner.isRunning(bot) {
+                                Text("Running")
+                                    .font(.caption2.weight(.bold))
+                                    .foregroundStyle(.green)
+                            } else {
+                                Text(bot.isActive ? "Active" : "Inactive")
+                                    .font(.caption2)
+                                    .foregroundStyle(bot.isActive ? .blue : .secondary)
+                            }
+                        }
+                        .swipeActions(edge: .trailing) {
+                            Button(role: .destructive) {
+                                unassignBot(bot)
+                            } label: {
+                                Label("Remove", systemImage: "minus.circle")
+                            }
+                        }
+                    }
+                }
+
+                Button {
+                    showAddBotSheet = true
+                } label: {
+                    Label("Add Bot", systemImage: "plus.circle.fill")
+                }
+            } header: {
+                Text("Bots")
+            }
+
         }
         .navigationTitle("Account")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             ensureProfile()
             alias = profile?.alias ?? ""
+        }
+        .sheet(isPresented: $showAddBotSheet) {
+            BotAssignmentSheet(accountId: account.id)
         }
     }
 
@@ -170,5 +227,12 @@ struct AccountDetailView: View {
         guard let p = profile else { return }
         p.alias = value
         try? modelContext.save()
+    }
+
+    private func unassignBot(_ bot: BotConfig) {
+        if let assignment = assignments.first(where: { $0.botId == bot.id }) {
+            modelContext.delete(assignment)
+            try? modelContext.save()
+        }
     }
 }

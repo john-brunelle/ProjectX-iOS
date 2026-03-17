@@ -62,10 +62,14 @@ final class BotConfig {
     var id: UUID
     var name: String
 
-    // Market & Account
-    var accountId: Int
+    // Market
+    var accountId: Int = 0     // DEPRECATED — kept for migration only. Use AccountBotAssignment.
     var contractId: String
     var contractName: String   // denormalized for display
+
+    // Runtime: which account this bot is currently running on (nil when stopped).
+    // Persisted so cold-start restore knows which account to reconnect.
+    var runningOnAccountId: Int?
 
     // Bar Configuration
     var barUnit: Int           // raw value of BarUnit (1=sec, 2=min, 3=hr, 4=day, 5=wk, 6=mo)
@@ -118,8 +122,9 @@ final class BotConfig {
     // MARK: Init
 
     init(
+        id: UUID = UUID(),
         name: String,
-        accountId: Int,
+        accountId: Int = 0,
         contractId: String,
         contractName: String,
         barUnit: BarUnit = .minute,
@@ -130,7 +135,7 @@ final class BotConfig {
         tradeDirection: TradeDirectionFilter = .both,
         indicators: [IndicatorConfig] = []
     ) {
-        self.id = UUID()
+        self.id = id
         self.name = name
         self.accountId = accountId
         self.contractId = contractId

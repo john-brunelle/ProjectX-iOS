@@ -22,6 +22,8 @@ struct BotsView: View {
     @Query(sort: \BotConfig.name)
     private var botsRaw: [BotConfig]
 
+    @Query private var allAssignments: [AccountBotAssignment]
+
     var isEmbedded: Bool = false
 
     @State private var filter: BotFilter = .active
@@ -82,7 +84,8 @@ struct BotsView: View {
                     } else {
                         Section {
                             ForEach(filteredBots) { bot in
-                                BotRow(bot: bot, runState: botRunner.runStates[bot.id])
+                                BotRow(bot: bot, runState: botRunner.runStates[bot.id],
+                                       accountNames: accountNames(for: bot))
                                     .contentShape(Rectangle())
                                     .onTapGesture { selectedBot = bot }
                                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
@@ -184,6 +187,11 @@ struct BotsView: View {
         try? modelContext.save()
     }
 
+    private func accountNames(for bot: BotConfig) -> [String] {
+        let assignedIds = allAssignments.filter { $0.botId == bot.id }.map(\.accountId)
+        return service.accounts.filter { assignedIds.contains($0.id) }.map(\.name)
+    }
+
     private func unarchiveBot(_ bot: BotConfig) {
         bot.isArchived = false
         bot.updatedAt = Date()
@@ -196,21 +204,30 @@ struct BotsView: View {
 struct BotRow: View {
     let bot: BotConfig
     let runState: BotRunState?
+    var accountNames: [String] = []
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        HStack(alignment: .top, spacing: 12) {
+            Button {
+                bot.isActive.toggle()
+                bot.updatedAt = Date()
+            } label: {
+                BotAvatar(botId: bot.id, size: 40)
+                    .overlay(alignment: .topTrailing) {
+                        Image(systemName: bot.isActive ? "checkmark.circle.fill" : "circle.dashed")
+                            .font(.system(size: 16))
+                            .foregroundStyle(bot.isActive ? .green : .orange)
+                            .background(Circle().fill(.background).padding(1))
+                            .offset(x: 4, y: -4)
+                    }
+            }
+            .buttonStyle(.plain)
+
+            VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text(bot.name)
                     .font(.headline)
                 Spacer()
-                Button {
-                    bot.isActive.toggle()
-                    bot.updatedAt = Date()
-                } label: {
-                    Image(systemName: bot.isActive ? "checkmark.circle.fill" : "circle.dashed")
-                        .foregroundStyle(bot.isActive ? .green : .orange)
-                }
-                .buttonStyle(.plain)
                 Label(bot.status.displayName, systemImage: bot.status.systemImage)
                     .font(.caption)
                     .foregroundStyle(statusColor)
@@ -228,6 +245,11 @@ struct BotRow: View {
                 Label("\(bot.indicators.count)", systemImage: "waveform.path.ecg")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+            if !accountNames.isEmpty {
+                Text(accountNames.joined(separator: ", "))
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
 
             // P&L summary row
@@ -271,6 +293,7 @@ struct BotRow: View {
                     }
                 }
             }
+        }
         }
         .padding(.vertical, 4)
         .opacity(bot.isActive ? 1.0 : 0.6)

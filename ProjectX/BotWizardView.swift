@@ -4,8 +4,8 @@ import SwiftData
 // ─────────────────────────────────────────────
 // Bot Wizard — Multi-Step Bot Creator/Editor
 //
-// 5 steps: Basics → Indicators → Bar Size →
-//          Risk Management → Review & Save
+// 4 steps: Basics → Indicators → Bar Size →
+//          Risk & Review
 // ─────────────────────────────────────────────
 
 struct BotWizardView: View {
@@ -14,15 +14,20 @@ struct BotWizardView: View {
     @Environment(\.dismiss) private var dismiss
 
     let existing: BotConfig?
+    let assignToAccountId: Int?
+
+    init(existing: BotConfig? = nil, assignToAccountId: Int? = nil) {
+        self.existing = existing
+        self.assignToAccountId = assignToAccountId
+    }
 
     // Step tracking
     @State private var currentStep = 0
-    private let stepCount = 5
-    private let stepLabels = ["Basics", "Indicators", "Bars", "Risk", "Review"]
+    private let stepCount = 4
+    private let stepLabels = ["Basics", "Indicators", "Bars", "Risk & Review"]
 
     // Step 1: Basics
     @State private var botName = ""
-    @State private var selectedAccount: Account?
     @State private var selectedContract: Contract?
     @State private var contracts: [Contract] = []
     @State private var contractSearch = ""
@@ -50,6 +55,7 @@ struct BotWizardView: View {
     // Step 5: Review
     @State private var testBarCount: Int?
     @State private var isTestingBars = false
+    @State private var previewBotId = UUID()
 
     var isEditing: Bool { existing != nil }
 
@@ -68,8 +74,7 @@ struct BotWizardView: View {
                     case 0: step1Basics
                     case 1: step2Indicators
                     case 2: step3BarSize
-                    case 3: step4RiskManagement
-                    case 4: step5Review
+                    case 3: step4RiskAndReview
                     default: EmptyView()
                     }
                 }
@@ -121,21 +126,6 @@ struct BotWizardView: View {
         List {
             Section("Bot Name") {
                 TextField("e.g. Scalper NQ", text: $botName)
-            }
-
-            Section("Account") {
-                if service.accounts.isEmpty {
-                    Text("No accounts available")
-                        .foregroundStyle(.secondary)
-                } else {
-                    Picker("Account", selection: $selectedAccount) {
-                        Text("Select an account").tag(nil as Account?)
-                        ForEach(service.accounts) { account in
-                            Text("\(account.name) (\(account.id))")
-                                .tag(account as Account?)
-                        }
-                    }
-                }
             }
 
             Section("Contract") {
@@ -286,9 +276,9 @@ struct BotWizardView: View {
         }
     }
 
-    // MARK: - Step 4: Risk Management
+    // MARK: - Step 4: Risk Management & Review
 
-    private var step4RiskManagement: some View {
+    private var step4RiskAndReview: some View {
         Form {
             Section("Position Size") {
                 Stepper("Quantity: \(quantity)", value: $quantity, in: 1...100)
@@ -316,48 +306,23 @@ struct BotWizardView: View {
                 }
                 .pickerStyle(.segmented)
             }
-        }
-    }
 
-    // MARK: - Step 5: Review
-
-    private var step5Review: some View {
-        Form {
-            Section("Bot") {
-                reviewRow("Name", botName)
-            }
-
-            Section("Account") {
-                if let account = selectedAccount {
-                    reviewRow("Account", "\(account.name) (ID: \(account.id))")
+            // ── Review Summary ─────────────
+            Section("Review") {
+                HStack {
+                    Spacer()
+                    BotAvatar(botId: isEditing ? existing!.id : previewBotId, size: 64)
+                        .shadow(color: .black.opacity(0.12), radius: 6, y: 3)
+                    Spacer()
                 }
-            }
-
-            Section("Contract") {
+                .listRowBackground(Color.clear)
+                reviewRow("Name", botName)
                 if let contract = selectedContract {
                     reviewRow("Contract", contract.name)
-                    reviewRow("Symbol", contract.symbolId)
-                    reviewRow("Tick Size", String(format: "%.4f", contract.tickSize))
                 }
-            }
-
-            Section("Indicators (\(selectedIndicatorIDs.count))") {
-                let selected = allIndicators.filter { selectedIndicatorIDs.contains($0.id) }
-                ForEach(selected) { indicator in
-                    IndicatorRow(indicator: indicator)
-                }
-            }
-
-            Section("Bar Size") {
-                let label = barUnitNumber == 1 ? barUnit.label : "\(barUnitNumber) \(barUnit.label)"
-                reviewRow("Bar Size", label)
-            }
-
-            Section("Risk Management") {
-                reviewRow("Quantity", "\(quantity)")
-                reviewRow("Stop Loss", useStopLoss ? "\(stopLossTicks) ticks" : "None")
-                reviewRow("Take Profit", useTakeProfit ? "\(takeProfitTicks) ticks" : "None")
-                reviewRow("Direction", tradeDirection.displayName)
+                let barLabel = barUnitNumber == 1 ? barUnit.label : "\(barUnitNumber) \(barUnit.label)"
+                reviewRow("Bar Size", barLabel)
+                reviewRow("Indicators", "\(selectedIndicatorIDs.count)")
             }
 
             Section("Data Check") {
@@ -424,7 +389,6 @@ struct BotWizardView: View {
         switch currentStep {
         case 0:
             return !botName.trimmingCharacters(in: .whitespaces).isEmpty
-                && selectedAccount != nil
                 && selectedContract != nil
         case 1:
             return !selectedIndicatorIDs.isEmpty
@@ -441,7 +405,6 @@ struct BotWizardView: View {
 
         if let existing {
             existing.name = trimmedName
-            existing.accountId = selectedAccount?.id ?? existing.accountId
             existing.contractId = selectedContract?.id ?? existing.contractId
             existing.contractName = selectedContract?.name ?? existing.contractName
             existing.barUnit = barUnit.rawValue
@@ -454,8 +417,8 @@ struct BotWizardView: View {
             existing.updatedAt = Date()
         } else {
             let bot = BotConfig(
+                id: previewBotId,
                 name: trimmedName,
-                accountId: selectedAccount!.id,
                 contractId: selectedContract!.id,
                 contractName: selectedContract!.name,
                 barUnit: barUnit,
@@ -467,6 +430,11 @@ struct BotWizardView: View {
                 indicators: selectedConfigs
             )
             modelContext.insert(bot)
+
+            // Auto-assign to the account if created from an account context
+            if let accountId = assignToAccountId {
+                modelContext.insert(AccountBotAssignment(accountId: accountId, botId: bot.id))
+            }
         }
 
         dismiss()
@@ -475,12 +443,8 @@ struct BotWizardView: View {
     // MARK: - Load Existing
 
     private func loadExisting() {
-        guard let existing else {
-            selectedAccount = service.activeAccount  // new bot: pre-select the active account
-            return
-        }
+        guard let existing else { return }
         botName = existing.name
-        selectedAccount = service.accounts.first { $0.id == existing.accountId }
         barUnit = existing.barUnitEnum ?? .minute
         barUnitNumber = existing.barUnitNumber
         useStopLoss = existing.stopLossTicks != nil

@@ -106,7 +106,7 @@ class BotRunner {
 
     // MARK: - Lifecycle
 
-    func start(bot: BotConfig) {
+    func start(bot: BotConfig, accountId: Int) {
         guard bot.isActive else {
             logToState(botId: bot.id, type: .error, message: "Cannot start: bot is inactive")
             return
@@ -118,7 +118,7 @@ class BotRunner {
         }
 
         // Prevent multiple bots on the same contract/account
-        if let conflictName = runningBotName(on: bot.contractId, accountId: bot.accountId, excluding: bot.id) {
+        if let conflictName = runningBotName(on: bot.contractId, accountId: accountId, excluding: bot.id) {
             logToState(botId: bot.id, type: .error,
                        message: "Cannot start: \"\(conflictName)\" is already running on \(bot.contractName)")
             return
@@ -131,11 +131,12 @@ class BotRunner {
         clearPersistedLog(for: bot.id)
 
         bot.status = .running
+        bot.runningOnAccountId = accountId
         bot.updatedAt = Date()
 
         // Track contract info for conflict detection
         runningBotInfo[bot.id] = RunningBotInfo(contractId: bot.contractId,
-                                                 accountId: bot.accountId,
+                                                 accountId: accountId,
                                                  name: bot.name)
 
         var state = BotRunState()
@@ -175,6 +176,7 @@ class BotRunner {
 
         if bot.status == .running {
             bot.status = .stopped
+            bot.runningOnAccountId = nil
             bot.updatedAt = Date()
         }
     }
@@ -246,6 +248,11 @@ class BotRunner {
     /// Resumes a bot after a cold start without clearing its activity log.
     private func restoreBot(_ bot: BotConfig) {
         guard bot.isActive, !bot.indicators.isEmpty else { return }
+        guard let accountId = bot.runningOnAccountId else {
+            bot.status = .stopped
+            bot.updatedAt = Date()
+            return
+        }
 
         let botId = bot.id
 
@@ -253,7 +260,7 @@ class BotRunner {
         runStates[botId]?.task?.cancel()
 
         runningBotInfo[botId] = RunningBotInfo(contractId: bot.contractId,
-                                               accountId: bot.accountId,
+                                               accountId: accountId,
                                                name: bot.name)
 
         // Reload the persisted log so history survives cold starts
@@ -342,9 +349,14 @@ class BotRunner {
         let botId = bot.id
         let side: OrderSide = signal == .buy ? .bid : .ask
 
+        guard let accountId = runningBotInfo[botId]?.accountId else {
+            logToState(botId: botId, type: .error, message: "No account context for running bot")
+            return
+        }
+
         // Check for existing position
         let existingPosition = realtime.livePositions.first {
-            $0.accountId == bot.accountId && $0.contractId == bot.contractId
+            $0.accountId == accountId && $0.contractId == bot.contractId
         }
 
         if let position = existingPosition {
@@ -365,7 +377,7 @@ class BotRunner {
 
         // Place order
         let orderId = await service.placeOrder(
-            accountId: bot.accountId,
+            accountId: accountId,
             contractId: bot.contractId,
             type: .market,
             side: side,

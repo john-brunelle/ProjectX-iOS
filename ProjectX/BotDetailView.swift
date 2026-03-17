@@ -18,9 +18,10 @@ struct BotDetailView: View {
 
     let bot: BotConfig
 
+    @Query private var allAssignments: [AccountBotAssignment]
+
     // ── Edit state (loaded from bot on appear) ──
     @State private var name = ""
-    @State private var selectedAccount: Account?
     @State private var contractId = ""
     @State private var contractName = ""
     @State private var barUnit: BarUnit = .minute
@@ -56,13 +57,13 @@ struct BotDetailView: View {
     // ── Other UI state ──
     @State private var showArchiveConfirmation = false
     @State private var showClearLogConfirmation = false
+    @State private var showAccountPicker = false
 
     private var runState: BotRunState? { botRunner.runStates[bot.id] }
     private var isRunning: Bool { botRunner.isRunning(bot) }
 
     private var hasChanges: Bool {
         name.trimmingCharacters(in: .whitespaces) != bot.name
-        || selectedAccount?.id != bot.accountId
         || contractId != bot.contractId
         || barUnit.rawValue != bot.barUnit
         || barUnitNumber != bot.barUnitNumber
@@ -150,10 +151,37 @@ struct BotDetailView: View {
 
     @ViewBuilder
     private var statusSections: some View {
-        // ── Active Toggle ───────────────────
+        // ── Hero + Active Toggle ────────────
         Section {
-            Toggle("Active", isOn: Bindable(bot).isActive)
+            VStack(spacing: 14) {
+                Button {
+                    bot.isActive.toggle()
+                    bot.updatedAt = Date()
+                } label: {
+                    BotAvatar(botId: bot.id, size: 80)
+                        .overlay(alignment: .topTrailing) {
+                            Image(systemName: bot.isActive ? "checkmark.circle.fill" : "circle.dashed")
+                                .font(.system(size: 22))
+                                .foregroundStyle(bot.isActive ? .green : .orange)
+                                .background(Circle().fill(.background).padding(1))
+                                .offset(x: 4, y: -4)
+                        }
+                }
+                .buttonStyle(.plain)
                 .disabled(isRunning)
+                .shadow(color: .black.opacity(0.12), radius: 8, y: 4)
+
+                VStack(spacing: 4) {
+                    Text(bot.name)
+                        .font(.title2.weight(.semibold))
+                    Text(bot.contractName)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 4)
+            .listRowBackground(Color.clear)
         } footer: {
             if !bot.isActive {
                 Text("Inactive bots cannot be started and are hidden from the Home dashboard.")
@@ -190,29 +218,42 @@ struct BotDetailView: View {
                         .font(.headline)
                 }
             } else {
-                let conflictBot = botRunner.runningBotName(
-                    on: bot.contractId, accountId: bot.accountId, excluding: bot.id)
+                let assignedAccountIds = allAssignments.filter { $0.botId == bot.id }.map(\.accountId)
+                let canStart = bot.isActive && !bot.indicators.isEmpty && !assignedAccountIds.isEmpty
                 Button {
-                    botRunner.start(bot: bot)
+                    if assignedAccountIds.count == 1 {
+                        botRunner.start(bot: bot, accountId: assignedAccountIds[0])
+                    } else {
+                        showAccountPicker = true
+                    }
                 } label: {
                     Label("Start Bot", systemImage: "play.circle.fill")
                         .font(.headline)
-                        .foregroundStyle(bot.indicators.isEmpty || conflictBot != nil || !bot.isActive ? .gray : .green)
+                        .foregroundStyle(canStart ? .green : .gray)
                 }
-                .disabled(bot.indicators.isEmpty || conflictBot != nil || !bot.isActive)
+                .disabled(!canStart)
             }
         } footer: {
+            let assignedAccountIds = allAssignments.filter { $0.botId == bot.id }.map(\.accountId)
             if !bot.isActive {
                 Text("Activate this bot before starting.")
                     .foregroundStyle(.orange)
             } else if bot.indicators.isEmpty {
                 Text("Add at least one indicator before starting.")
                     .foregroundStyle(.orange)
-            } else if let conflictBot = botRunner.runningBotName(
-                on: bot.contractId, accountId: bot.accountId, excluding: bot.id) {
-                Text("\"\(conflictBot)\" is already running on \(bot.contractName). Only one bot per contract is allowed.")
+            } else if assignedAccountIds.isEmpty {
+                Text("Assign this bot to an account before starting.")
                     .foregroundStyle(.orange)
             }
+        }
+        .confirmationDialog("Start on which account?", isPresented: $showAccountPicker) {
+            let assignedAccountIds = allAssignments.filter { $0.botId == bot.id }.map(\.accountId)
+            ForEach(service.accounts.filter { assignedAccountIds.contains($0.id) }) { account in
+                Button(account.name) {
+                    botRunner.start(bot: bot, accountId: account.id)
+                }
+            }
+            Button("Cancel", role: .cancel) {}
         }
 
         // ── Performance ──────────────────────
@@ -307,18 +348,6 @@ struct BotDetailView: View {
         Section("Configuration") {
             TextField("Bot Name", text: $name)
                 .disabled(isRunning)
-
-            if service.accounts.isEmpty {
-                Text("No accounts loaded")
-                    .foregroundStyle(.secondary)
-            } else {
-                Picker("Account", selection: $selectedAccount) {
-                    ForEach(service.accounts) { acct in
-                        Text("\(acct.name) (\(acct.id))").tag(acct as Account?)
-                    }
-                }
-                .disabled(isRunning)
-            }
 
             HStack {
                 Text("Contract").foregroundStyle(.secondary)
@@ -452,6 +481,15 @@ struct BotDetailView: View {
         }
 
         Section {
+            Button {
+                bot.isActive.toggle()
+                bot.updatedAt = Date()
+            } label: {
+                Label(bot.isActive ? "Deactivate Bot" : "Activate Bot",
+                      systemImage: bot.isActive ? "circle.dashed" : "checkmark.circle.fill")
+            }
+            .disabled(isRunning)
+
             Button {
                 duplicateBot()
             } label: {
@@ -734,7 +772,6 @@ struct BotDetailView: View {
         quantity = bot.quantity
         tradeDirection = bot.tradeDirection
         selectedIndicatorIDs = Set(bot.indicators.map { $0.id })
-        selectedAccount = service.accounts.first { $0.id == bot.accountId }
     }
 
     private func save() {
@@ -742,7 +779,6 @@ struct BotDetailView: View {
         guard !trimmedName.isEmpty else { return }
 
         bot.name = trimmedName
-        bot.accountId = selectedAccount?.id ?? bot.accountId
         bot.contractId = contractId
         bot.contractName = contractName
         bot.barUnit = barUnit.rawValue
@@ -770,7 +806,6 @@ struct BotDetailView: View {
     private func duplicateBot() {
         let copy = BotConfig(
             name: bot.name + " (Copy)",
-            accountId: bot.accountId,
             contractId: bot.contractId,
             contractName: bot.contractName,
             barUnit: bot.barUnitEnum ?? .minute,

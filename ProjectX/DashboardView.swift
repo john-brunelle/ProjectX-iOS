@@ -60,6 +60,8 @@ struct DashboardView: View {
             ))
             // Inject model context before any bot restore/persistence calls
             botRunner.modelContext = modelContext
+            // One-time migration: create AccountBotAssignment records from legacy accountId
+            migrateBotAssignmentsIfNeeded()
             // Auto-connect user hub when dashboard loads
             if let account = service.activeAccount {
                 realtime.connectUserHub(accountId: account.id)
@@ -86,6 +88,27 @@ struct DashboardView: View {
             botRunner.stopAll()
             realtime.disconnectAll()
         }
+    }
+
+    // MARK: - Migration
+
+    /// One-time migration: creates AccountBotAssignment records from legacy BotConfig.accountId values.
+    private func migrateBotAssignmentsIfNeeded() {
+        let key = "didMigrateBotAssignments"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+
+        let existing = (try? modelContext.fetch(FetchDescriptor<AccountBotAssignment>())) ?? []
+        let existingPairs = Set(existing.map { "\($0.accountId)-\($0.botId)" })
+
+        for bot in allBots where bot.accountId != 0 {
+            let pair = "\(bot.accountId)-\(bot.id)"
+            if !existingPairs.contains(pair) {
+                modelContext.insert(AccountBotAssignment(accountId: bot.accountId, botId: bot.id))
+            }
+        }
+
+        try? modelContext.save()
+        UserDefaults.standard.set(true, forKey: key)
     }
 }
 
