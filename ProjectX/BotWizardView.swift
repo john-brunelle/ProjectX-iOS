@@ -46,10 +46,10 @@ struct BotWizardView: View {
 
     // Step 4: Risk Management
     @State private var useStopLoss = false
-    @State private var stopLossTicks = 10
+    @State private var stopLossTicks = UserDefaults.standard.object(forKey: "pref_defaultStopLossTicks") as? Int ?? 10
     @State private var useTakeProfit = false
-    @State private var takeProfitTicks = 20
-    @State private var quantity = 1
+    @State private var takeProfitTicks = UserDefaults.standard.object(forKey: "pref_defaultTakeProfitTicks") as? Int ?? 20
+    @State private var quantity = UserDefaults.standard.object(forKey: "pref_defaultQuantity") as? Int ?? 1
     @State private var tradeDirection: TradeDirectionFilter = .both
 
     // Step 5: Review
@@ -457,9 +457,9 @@ struct BotWizardView: View {
         barUnit = existing.barUnitEnum ?? .minute
         barUnitNumber = existing.barUnitNumber
         useStopLoss = existing.stopLossTicks != nil
-        stopLossTicks = existing.stopLossTicks ?? 10
+        stopLossTicks = existing.stopLossTicks ?? UserDefaults.standard.object(forKey: "pref_defaultStopLossTicks") as? Int ?? 10
         useTakeProfit = existing.takeProfitTicks != nil
-        takeProfitTicks = existing.takeProfitTicks ?? 20
+        takeProfitTicks = existing.takeProfitTicks ?? UserDefaults.standard.object(forKey: "pref_defaultTakeProfitTicks") as? Int ?? 20
         quantity = existing.quantity
         tradeDirection = existing.tradeDirection
         selectedIndicatorIDs = Set(existing.indicators.map { $0.id })

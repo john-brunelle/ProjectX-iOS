@@ -9,6 +9,12 @@ struct ProjectXApp: App {
     @State private var botRunner      = BotRunner.shared
     @State private var networkLogger  = NetworkLogger.shared
 
+    init() {
+        UserDefaults.standard.register(defaults: [
+            "pref_autoRestoreBots": true
+        ])
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()

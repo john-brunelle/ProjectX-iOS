@@ -324,6 +324,7 @@ class BotRunner {
     /// Called once on app launch to restart any bot instances that were
     /// running before a cold start/kill.
     func restoreRunningBots(_ bots: [BotConfig]) {
+        guard UserDefaults.standard.bool(forKey: "pref_autoRestoreBots") else { return }
         guard let ctx = modelContext else { return }
         let descriptor = FetchDescriptor<BotRunRecord>()
         guard let records = try? ctx.fetch(descriptor) else { return }
