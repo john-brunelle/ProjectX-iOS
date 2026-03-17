@@ -12,13 +12,14 @@ struct NetworkActivityView: View {
     @Environment(NetworkLogger.self) private var logger
 
     @State private var selectedFilter: NetworkLogger.Source = .all
+    @State private var selectedEndpoint: NetworkLogger.Endpoint = .all
     @State private var expandedEntryIDs: Set<UUID> = []
 
     private var filteredEntries: [NetworkLogger.Entry] {
-        if selectedFilter == .all {
-            return logger.entries
+        logger.entries.filter { entry in
+            (selectedFilter == .all || entry.source == selectedFilter)
+            && selectedEndpoint.matches(entry)
         }
-        return logger.entries.filter { $0.source == selectedFilter }
     }
 
     var body: some View {
@@ -38,19 +39,48 @@ struct NetworkActivityView: View {
     @ViewBuilder
     private var filterBar: some View {
         VStack(spacing: 8) {
-            Picker("Filter", selection: $selectedFilter) {
-                ForEach(NetworkLogger.Source.allCases) { source in
-                    Text(source.rawValue).tag(source)
+            HStack(spacing: 12) {
+                Picker("Source", selection: $selectedFilter) {
+                    ForEach(NetworkLogger.Source.allCases) { source in
+                        Text(source.rawValue).tag(source)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                Menu {
+                    ForEach(NetworkLogger.Endpoint.allCases) { endpoint in
+                        Button {
+                            selectedEndpoint = endpoint
+                        } label: {
+                            if selectedEndpoint == endpoint {
+                                Label(endpoint.rawValue, systemImage: "checkmark")
+                            } else {
+                                Text(endpoint.rawValue)
+                            }
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "line.3.horizontal.decrease")
+                            .font(.caption2)
+                        Text(selectedEndpoint == .all ? "Endpoint" : selectedEndpoint.rawValue)
+                            .font(.caption)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .background(
+                        selectedEndpoint == .all ? Color.clear : Color.accentColor.opacity(0.15),
+                        in: RoundedRectangle(cornerRadius: 6)
+                    )
                 }
             }
-            .pickerStyle(.segmented)
             .padding(.horizontal)
 
             HStack {
                 Image(systemName: "clock")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
-                Text("Logs kept for up to 24 hours")
+                Text("Logs kept for up to 12 hours")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
                 Spacer()

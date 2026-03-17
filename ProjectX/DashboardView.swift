@@ -61,8 +61,10 @@ struct DashboardView: View {
                 requestBody: "activeAccount=\(service.activeAccount?.id.description ?? "nil")",
                 responseBody: nil, error: nil
             ))
-            // Inject model context before any bot restore/persistence calls
+            // Inject model context before any restore/persistence calls
             botRunner.modelContext = modelContext
+            NetworkLogger.shared.modelContext = modelContext
+            NetworkLogger.shared.restoreEntries()
             // One-time migration: create AccountBotAssignment records from legacy accountId
             migrateBotAssignmentsIfNeeded()
             // Auto-connect user hub when dashboard loads
@@ -88,7 +90,6 @@ struct DashboardView: View {
                 path: "lifecycle", statusCode: nil, duration: nil,
                 requestBody: nil, responseBody: "dashboard disappeared", error: nil
             ))
-            botRunner.stopAll()
             realtime.disconnectAll()
         }
     }

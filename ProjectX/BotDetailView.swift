@@ -879,7 +879,7 @@ struct BotDetailView: View {
             Section {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 6) {
-                        ForEach(allLogs.prefix(50)) { entry in
+                        ForEach(allLogs) { entry in
                             BotLogRow(entry: entry)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
