@@ -60,8 +60,8 @@ struct BotDetailView: View {
     @State private var showClearLogConfirmation = false
     @State private var showAccountPicker = false
 
-    private var runState: BotRunState? { botRunner.runStates[bot.id] }
-    private var isRunning: Bool { botRunner.isRunning(bot) }
+    private var isRunning: Bool { botRunner.isRunningAnywhere(bot) }
+    private var runningAccountIds: [Int] { botRunner.runningAccountIds(for: bot) }
 
     private var hasChanges: Bool {
         name.trimmingCharacters(in: .whitespaces) != bot.name
@@ -119,7 +119,7 @@ struct BotDetailView: View {
             }
             .confirmationDialog("Archive Bot?", isPresented: $showArchiveConfirmation) {
                 Button("Archive", role: .destructive) {
-                    if isRunning { botRunner.stop(bot: bot) }
+                    if isRunning { botRunner.stopAllInstances(of: bot) }
                     bot.isArchived = true
                     bot.isActive = false
                     bot.updatedAt = Date()
@@ -209,33 +209,67 @@ struct BotDetailView: View {
             }
         }
 
-        // ── Start / Stop ─────────────────────
-        Section {
-            if isRunning {
-                Button(role: .destructive) {
-                    botRunner.stop(bot: bot)
-                } label: {
-                    Label("Stop Bot", systemImage: "stop.circle.fill")
-                        .font(.headline)
-                }
-            } else {
-                let assignedAccountIds = allAssignments.filter { $0.botId == bot.id }.map(\.accountId)
-                let canStart = bot.isActive && !bot.indicators.isEmpty && !assignedAccountIds.isEmpty
-                Button {
-                    if assignedAccountIds.count == 1 {
-                        botRunner.start(bot: bot, accountId: assignedAccountIds[0])
-                    } else {
-                        showAccountPicker = true
+        // ── Running Instances ────────────────
+        if !runningAccountIds.isEmpty {
+            Section("Running On") {
+                ForEach(runningAccountIds, id: \.self) { accountId in
+                    if let account = service.accounts.first(where: { $0.id == accountId }) {
+                        let state = botRunner.runState(for: bot, accountId: accountId)
+                        HStack {
+                            Circle()
+                                .fill(.green)
+                                .frame(width: 8, height: 8)
+                                .modifier(PulsingModifier())
+                            Text(displayName(for: account))
+                                .font(.body.weight(.medium))
+                            if let state {
+                                Text(signalLabel(state.lastSignal))
+                                    .font(.caption2.weight(.bold))
+                                    .foregroundStyle(signalColor(state.lastSignal))
+                            }
+                            Spacer()
+                            Button(role: .destructive) {
+                                botRunner.stop(bot: bot, accountId: accountId)
+                            } label: {
+                                Image(systemName: "stop.circle.fill")
+                                    .foregroundStyle(.red)
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
-                } label: {
-                    Label("Start Bot", systemImage: "play.circle.fill")
-                        .font(.headline)
-                        .foregroundStyle(canStart ? .green : .gray)
                 }
-                .disabled(!canStart)
+
+                if runningAccountIds.count > 1 {
+                    Button(role: .destructive) {
+                        botRunner.stopAllInstances(of: bot)
+                    } label: {
+                        Label("Stop All Instances", systemImage: "stop.circle.fill")
+                            .font(.subheadline)
+                    }
+                }
             }
+        }
+
+        // ── Start ─────────────────────
+        Section {
+            let assignedAccountIds = allAssignments.filter { $0.botId == bot.id }.map(\.accountId)
+            let stoppedAccountIds = assignedAccountIds.filter { !runningAccountIds.contains($0) }
+            let canStart = bot.isActive && !bot.indicators.isEmpty && !stoppedAccountIds.isEmpty
+            Button {
+                if stoppedAccountIds.count == 1 {
+                    botRunner.start(bot: bot, accountId: stoppedAccountIds[0])
+                } else {
+                    showAccountPicker = true
+                }
+            } label: {
+                Label("Start Bot", systemImage: "play.circle.fill")
+                    .font(.headline)
+                    .foregroundStyle(canStart ? .green : .gray)
+            }
+            .disabled(!canStart)
         } footer: {
             let assignedAccountIds = allAssignments.filter { $0.botId == bot.id }.map(\.accountId)
+            let stoppedAccountIds = assignedAccountIds.filter { !runningAccountIds.contains($0) }
             if !bot.isActive {
                 Text("Activate this bot before starting.")
                     .foregroundStyle(.orange)
@@ -245,11 +279,15 @@ struct BotDetailView: View {
             } else if assignedAccountIds.isEmpty {
                 Text("Assign this bot to an account before starting.")
                     .foregroundStyle(.orange)
+            } else if stoppedAccountIds.isEmpty && !runningAccountIds.isEmpty {
+                Text("Already running on all assigned accounts.")
+                    .foregroundStyle(.secondary)
             }
         }
         .confirmationDialog("Start on which account?", isPresented: $showAccountPicker) {
             let assignedAccountIds = allAssignments.filter { $0.botId == bot.id }.map(\.accountId)
-            ForEach(service.accounts.filter { assignedAccountIds.contains($0.id) }) { account in
+            let stoppedAccountIds = assignedAccountIds.filter { !runningAccountIds.contains($0) }
+            ForEach(service.accounts.filter { stoppedAccountIds.contains($0.id) }) { account in
                 Button(displayName(for: account)) {
                     botRunner.start(bot: bot, accountId: account.id)
                 }
@@ -260,86 +298,54 @@ struct BotDetailView: View {
         // ── Performance ──────────────────────
         performanceSection
 
-        // ── Live Status ──────────────────────
-        if let state = runState {
-            Section("Live Status") {
-                HStack {
-                    Text("Status").foregroundStyle(.secondary)
-                    Spacer()
-                    Label(bot.status.displayName, systemImage: bot.status.systemImage)
-                        .foregroundStyle(statusColor)
-                }
-                HStack {
-                    Text("Last Signal").foregroundStyle(.secondary)
-                    Spacer()
-                    Text(signalLabel(state.lastSignal))
-                        .fontWeight(.semibold)
-                        .foregroundStyle(signalColor(state.lastSignal))
-                }
-                if let barTime = state.lastBarTime {
+        // ── Live Status (per account) ────────
+        ForEach(runningAccountIds, id: \.self) { accountId in
+            if let state = botRunner.runState(for: bot, accountId: accountId) {
+                let accountName = service.accounts.first(where: { $0.id == accountId }).map { displayName(for: $0) } ?? "Account \(accountId)"
+                Section("Live Status — \(accountName)") {
                     HStack {
-                        Text("Last Bar").foregroundStyle(.secondary)
+                        Text("Last Signal").foregroundStyle(.secondary)
                         Spacer()
-                        Text(barTime).font(.caption).monospaced()
+                        Text(signalLabel(state.lastSignal))
+                            .fontWeight(.semibold)
+                            .foregroundStyle(signalColor(state.lastSignal))
                     }
-                }
-                if let pollTime = state.lastPollTime {
-                    HStack {
-                        Text("Last Poll").foregroundStyle(.secondary)
-                        Spacer()
-                        HStack(spacing: 0) {
-                            Text(pollTime, style: .relative)
-                            Text(" ago")
+                    if let barTime = state.lastBarTime {
+                        HStack {
+                            Text("Last Bar").foregroundStyle(.secondary)
+                            Spacer()
+                            Text(barTime).font(.caption).monospaced()
                         }
-                        .font(.caption)
+                    }
+                    if let pollTime = state.lastPollTime {
+                        HStack {
+                            Text("Last Poll").foregroundStyle(.secondary)
+                            Spacer()
+                            HStack(spacing: 0) {
+                                Text(pollTime, style: .relative)
+                                Text(" ago")
+                            }
+                            .font(.caption)
+                        }
+                    }
+                    if state.sessionPnL != 0 || state.sessionTradeCount > 0 {
+                        HStack {
+                            Text("Session P&L").foregroundStyle(.secondary)
+                            Spacer()
+                            Text(formatPnL(state.sessionPnL))
+                                .fontWeight(.semibold)
+                                .foregroundStyle(state.sessionPnL >= 0 ? .green : .red)
+                            Text("(\(state.sessionTradeCount))")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
             }
         }
 
-        // ── Activity Log ─────────────────────
-        if let state = runState, !state.log.isEmpty {
-            Section {
-                let entries = Array(state.log.prefix(50))
-                if entries.count > 10 {
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 0) {
-                            ForEach(entries) { entry in
-                                BotLogRow(entry: entry)
-                                    .padding(.vertical, 2)
-                                Divider()
-                            }
-                        }
-                    }
-                    .frame(maxHeight: 320)
-                } else {
-                    ForEach(entries) { entry in
-                        BotLogRow(entry: entry)
-                    }
-                }
-            } header: {
-                HStack {
-                    Text("Activity Log")
-                    Spacer()
-                    Button(role: .destructive) {
-                        showClearLogConfirmation = true
-                    } label: {
-                        Text("Clear")
-                            .font(.caption)
-                            .textCase(nil)
-                    }
-                }
-            }
-            .confirmationDialog("Clear Activity Log?",
-                                isPresented: $showClearLogConfirmation,
-                                titleVisibility: .visible) {
-                Button("Clear Log", role: .destructive) {
-                    botRunner.clearLog(for: bot.id)
-                }
-            } message: {
-                Text("This will permanently delete all log entries for this bot.")
-            }
-        }
+        // ── Activity Log (combined across all instances) ──
+        activityLogSection
     }
 
     // MARK: - Configuration Sections (Name, Account, Contract, Bar Size)
@@ -388,20 +394,34 @@ struct BotDetailView: View {
         }
 
         Section("Stop Loss") {
-            Toggle("Enable Stop Loss", isOn: $useStopLoss)
-                .disabled(isRunning)
-            if useStopLoss {
-                Stepper("Ticks: \(stopLossTicks)", value: $stopLossTicks, in: 1...500)
-                    .disabled(isRunning)
+            if isRunning {
+                HStack {
+                    Text("Stop Loss")
+                    Spacer()
+                    Text(useStopLoss ? "\(stopLossTicks) ticks" : "Off")
+                        .foregroundStyle(useStopLoss ? .primary : .secondary)
+                }
+            } else {
+                Toggle("Enable Stop Loss", isOn: $useStopLoss)
+                if useStopLoss {
+                    Stepper("Ticks: \(stopLossTicks)", value: $stopLossTicks, in: 1...500)
+                }
             }
         }
 
         Section("Take Profit") {
-            Toggle("Enable Take Profit", isOn: $useTakeProfit)
-                .disabled(isRunning)
-            if useTakeProfit {
-                Stepper("Ticks: \(takeProfitTicks)", value: $takeProfitTicks, in: 1...500)
-                    .disabled(isRunning)
+            if isRunning {
+                HStack {
+                    Text("Take Profit")
+                    Spacer()
+                    Text(useTakeProfit ? "\(takeProfitTicks) ticks" : "Off")
+                        .foregroundStyle(useTakeProfit ? .primary : .secondary)
+                }
+            } else {
+                Toggle("Enable Take Profit", isOn: $useTakeProfit)
+                if useTakeProfit {
+                    Stepper("Ticks: \(takeProfitTicks)", value: $takeProfitTicks, in: 1...500)
+                }
             }
         }
 
@@ -529,12 +549,18 @@ struct BotDetailView: View {
     @ViewBuilder
     private var performanceSection: some View {
         Section("Performance") {
+            let aggregatedPnL = runningAccountIds.reduce(0.0) { sum, acctId in
+                sum + (botRunner.runState(for: bot, accountId: acctId)?.sessionPnL ?? 0)
+            }
+            let aggregatedTrades = runningAccountIds.reduce(0) { sum, acctId in
+                sum + (botRunner.runState(for: bot, accountId: acctId)?.sessionTradeCount ?? 0)
+            }
             HStack(spacing: 0) {
                 pnlTile(
                     label: isRunning ? "Session P&L" : "Last Session",
-                    value: runState?.sessionPnL ?? 0,
-                    trades: runState?.sessionTradeCount ?? 0,
-                    showNA: !isRunning && runState == nil
+                    value: aggregatedPnL,
+                    trades: aggregatedTrades,
+                    showNA: !isRunning
                 )
                 Divider()
                 pnlTile(
@@ -837,12 +863,56 @@ struct BotDetailView: View {
         }
     }
 
-    private var statusColor: Color {
-        switch bot.status {
-        case .running: .green
-        case .paused:  .orange
-        case .error:   .red
-        case .stopped: .secondary
+    // MARK: - Activity Log Section
+
+    @ViewBuilder
+    private var activityLogSection: some View {
+        let allLogs: [BotLogEntry] = {
+            var logs: [BotLogEntry] = []
+            for (key, state) in botRunner.runStates where key.botId == bot.id {
+                logs.append(contentsOf: state.log)
+            }
+            return logs.sorted { $0.timestamp > $1.timestamp }
+        }()
+
+        if !allLogs.isEmpty {
+            Section {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 6) {
+                        ForEach(allLogs.prefix(50)) { entry in
+                            BotLogRow(entry: entry)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+                .frame(maxHeight: 300)
+            } header: {
+                HStack {
+                    Text("Activity Log")
+                    Spacer()
+                    if !runningAccountIds.isEmpty {
+                        Button(role: .destructive) {
+                            showClearLogConfirmation = true
+                        } label: {
+                            Text("Clear")
+                                .font(.caption)
+                        }
+                    }
+                }
+            }
+            .confirmationDialog("Clear Activity Log?", isPresented: $showClearLogConfirmation) {
+                Button("Clear Log", role: .destructive) {
+                    for accountId in runningAccountIds {
+                        botRunner.clearLog(for: bot.id, accountId: accountId)
+                    }
+                    // Also clear logs for stopped instances
+                    for (key, _) in botRunner.runStates where key.botId == bot.id {
+                        botRunner.clearLog(for: key.botId, accountId: key.accountId)
+                    }
+                }
+                Button("Cancel", role: .cancel) {}
+            }
         }
     }
 

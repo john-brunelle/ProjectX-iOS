@@ -16,8 +16,8 @@ struct DashboardView: View {
             HomeView()
                 .tabItem { Label("Home",       systemImage: "house.fill") }
                 .tag(0)
-            LiveDashboardView()
-                .tabItem { Label("Live",       systemImage: "dot.radiowaves.left.and.right") }
+            AccountsTab()
+                .tabItem { Label("Accounts",   systemImage: "person.crop.rectangle.stack") }
                 .tag(1)
             BotsView()
                 .tabItem { Label("Bots",       systemImage: "gearshape.2.fill") }
@@ -26,8 +26,8 @@ struct DashboardView: View {
             IndicatorsView()
                 .tabItem { Label("Indicators", systemImage: "waveform.path.ecg") }
                 .tag(3)
-            AccountsTab()
-                .tabItem { Label("Accounts",   systemImage: "person.crop.rectangle.stack") }
+            LiveDashboardView()
+                .tabItem { Label("Live",       systemImage: "dot.radiowaves.left.and.right") }
                 .tag(4)
             OrdersView()
                 .tabItem { Label("Orders",     systemImage: "list.bullet.rectangle") }
@@ -47,6 +47,9 @@ struct DashboardView: View {
             NetworkActivityView()
                 .tabItem { Label("Network",    systemImage: "network") }
                 .tag(10)
+            PreferencesView()
+                .tabItem { Label("Preferences", systemImage: "slider.horizontal.3") }
+                .tag(11)
         }
         .environment(service)
         .environment(realtime)

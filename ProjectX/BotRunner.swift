@@ -7,8 +7,10 @@ import SwiftData
 // Manages running bots: polls bars, evaluates
 // indicators, places orders when signals fire.
 //
-// Polling-based: SignalR does not stream bars,
-// so we fetch via REST at calculated intervals.
+// Each (bot, account) pair runs independently.
+// The same bot can run on multiple accounts
+// concurrently, each with its own poll loop,
+// signal state, and session P&L.
 // ─────────────────────────────────────────────
 
 // MARK: - Log Types
@@ -24,29 +26,39 @@ struct BotLogEntry: Identifiable {
     let id: UUID
     let timestamp: Date
     let botId: UUID
+    let accountId: Int
     let type: BotLogType
     let message: String
 
     /// New entry — generates a fresh id.
-    init(timestamp: Date, botId: UUID, type: BotLogType, message: String) {
+    init(timestamp: Date, botId: UUID, accountId: Int = 0, type: BotLogType, message: String) {
         self.id        = UUID()
         self.timestamp = timestamp
         self.botId     = botId
+        self.accountId = accountId
         self.type      = type
         self.message   = message
     }
 
     /// Reconstructed from a persisted record — preserves the original id.
-    init(id: UUID, timestamp: Date, botId: UUID, type: BotLogType, message: String) {
+    init(id: UUID, timestamp: Date, botId: UUID, accountId: Int = 0, type: BotLogType, message: String) {
         self.id        = id
         self.timestamp = timestamp
         self.botId     = botId
+        self.accountId = accountId
         self.type      = type
         self.message   = message
     }
 }
 
-// MARK: - Per-Bot Runtime State
+// MARK: - Composite Run Key
+
+struct BotRunKey: Hashable {
+    let botId: UUID
+    let accountId: Int
+}
+
+// MARK: - Per-Instance Runtime State
 
 struct BotRunState {
     var task: Task<Void, Never>?
@@ -71,7 +83,7 @@ class BotRunner {
     private let service = ProjectXService.shared
     private let realtime = RealtimeService.shared
 
-    private(set) var runStates: [UUID: BotRunState] = [:]
+    private(set) var runStates: [BotRunKey: BotRunState] = [:]
 
     var runningCount: Int {
         runStates.values.filter { $0.task != nil && !($0.task?.isCancelled ?? true) }.count
@@ -80,24 +92,21 @@ class BotRunner {
     /// Returns the name of a currently-running bot on the given contract/account, or nil.
     /// Used by UI to disable start buttons and show hints.
     func runningBotName(on contractId: String, accountId: Int, excluding botId: UUID) -> String? {
-        for (id, state) in runStates where id != botId {
+        for (key, state) in runStates where key.botId != botId && key.accountId == accountId {
             guard let task = state.task, !task.isCancelled else { continue }
-            // We need the bot's contract — stored when we log the start
-            if let info = runningBotInfo[id],
-               info.contractId == contractId && info.accountId == accountId {
+            if let info = runningBotInfo[key], info.contractId == contractId {
                 return info.name
             }
         }
         return nil
     }
 
-    /// Lightweight info kept per running bot so we can query contract/account without holding BotConfig.
+    /// Lightweight info kept per running instance so we can query contract without holding BotConfig.
     private struct RunningBotInfo {
         let contractId: String
-        let accountId: Int
         let name: String
     }
-    private var runningBotInfo: [UUID: RunningBotInfo] = [:]
+    private var runningBotInfo: [BotRunKey: RunningBotInfo] = [:]
 
     /// Injected by DashboardView before any restore/start calls.
     var modelContext: ModelContext?
@@ -107,60 +116,65 @@ class BotRunner {
     // MARK: - Lifecycle
 
     func start(bot: BotConfig, accountId: Int) {
+        let key = BotRunKey(botId: bot.id, accountId: accountId)
+
         guard bot.isActive else {
-            logToState(botId: bot.id, type: .error, message: "Cannot start: bot is inactive")
+            logToState(key: key, type: .error, message: "Cannot start: bot is inactive")
             return
         }
 
         guard !bot.indicators.isEmpty else {
-            logToState(botId: bot.id, type: .error, message: "Cannot start: no indicators configured")
+            logToState(key: key, type: .error, message: "Cannot start: no indicators configured")
             return
         }
 
         // Prevent multiple bots on the same contract/account
         if let conflictName = runningBotName(on: bot.contractId, accountId: accountId, excluding: bot.id) {
-            logToState(botId: bot.id, type: .error,
+            logToState(key: key, type: .error,
                        message: "Cannot start: \"\(conflictName)\" is already running on \(bot.contractName)")
             return
         }
 
-        // Initialize or reset run state
-        stop(bot: bot)
+        // Stop this specific instance if already running
+        stopInstance(key: key, bot: bot)
 
         // Clear persisted log — this is a fresh start, not a restore
-        clearPersistedLog(for: bot.id)
+        clearPersistedLog(for: key)
 
-        bot.status = .running
-        bot.runningOnAccountId = accountId
         bot.updatedAt = Date()
 
+        // Persist running state for cold-start restore
+        persistRunRecord(key: key)
+
         // Track contract info for conflict detection
-        runningBotInfo[bot.id] = RunningBotInfo(contractId: bot.contractId,
-                                                 accountId: accountId,
-                                                 name: bot.name)
+        runningBotInfo[key] = RunningBotInfo(contractId: bot.contractId, name: bot.name)
 
         var state = BotRunState()
-        log(botId: bot.id, type: .info, message: "Bot started", state: &state)
+        log(key: key, type: .info, message: "Bot started on account \(accountId)", state: &state)
 
-        let botId = bot.id
         state.task = Task { [weak self] in
             guard let self else { return }
-            await self.pollLoop(bot: bot)
-            // If loop exits naturally (cancellation), ensure cleanup
-            await MainActor.run {
-                if bot.status == .running {
-                    bot.status = .stopped
-                    bot.updatedAt = Date()
-                }
-            }
+            await self.pollLoop(bot: bot, accountId: accountId)
         }
 
-        runStates[botId] = state
+        runStates[key] = state
     }
 
-    func stop(bot: BotConfig) {
-        let botId = bot.id
-        if let existing = runStates[botId] {
+    func stop(bot: BotConfig, accountId: Int) {
+        let key = BotRunKey(botId: bot.id, accountId: accountId)
+        stopInstance(key: key, bot: bot)
+    }
+
+    /// Stops all instances of a bot across all accounts.
+    func stopAllInstances(of bot: BotConfig) {
+        let keys = runStates.keys.filter { $0.botId == bot.id }
+        for key in keys {
+            stopInstance(key: key, bot: bot)
+        }
+    }
+
+    private func stopInstance(key: BotRunKey, bot: BotConfig) {
+        if let existing = runStates[key] {
             // Flush session P&L into lifetime before clearing
             bot.lifetimePnL += existing.sessionPnL
             bot.lifetimeTradeCount += existing.sessionTradeCount
@@ -168,28 +182,46 @@ class BotRunner {
             existing.task?.cancel()
             var updated = existing
             updated.task = nil
-            log(botId: botId, type: .info, message: "Bot stopped", state: &updated)
-            runStates[botId] = updated
+            log(key: key, type: .info, message: "Bot stopped", state: &updated)
+            runStates[key] = updated
         }
 
-        runningBotInfo.removeValue(forKey: botId)
-
-        if bot.status == .running {
-            bot.status = .stopped
-            bot.runningOnAccountId = nil
-            bot.updatedAt = Date()
-        }
+        runningBotInfo.removeValue(forKey: key)
+        removeRunRecord(key: key)
+        bot.updatedAt = Date()
     }
 
     func stopAll() {
-        for (botId, state) in runStates {
+        for (key, state) in runStates {
             state.task?.cancel()
             var updated = state
             updated.task = nil
-            log(botId: botId, type: .info, message: "Bot stopped (stop all)", state: &updated)
-            runStates[botId] = updated
+            log(key: key, type: .info, message: "Bot stopped (stop all)", state: &updated)
+            runStates[key] = updated
         }
         runningBotInfo.removeAll()
+        removeAllRunRecords()
+    }
+
+    /// Stops all bot instances running on a specific account.
+    func stopAll(accountId: Int) {
+        for (key, state) in runStates where key.accountId == accountId {
+            guard let task = state.task, !task.isCancelled else { continue }
+            task.cancel()
+            var updated = state
+            updated.task = nil
+            log(key: key, type: .info, message: "Bot stopped (stop all on account)", state: &updated)
+            runStates[key] = updated
+            runningBotInfo.removeValue(forKey: key)
+            removeRunRecord(key: key)
+        }
+    }
+
+    /// Returns the number of running instances on a specific account.
+    func runningCount(accountId: Int) -> Int {
+        runStates.filter { key, state in
+            key.accountId == accountId && state.task != nil && !(state.task?.isCancelled ?? true)
+        }.count
     }
 
     /// Nuclear stop: halts all bots, cancels every open order,
@@ -223,136 +255,196 @@ class BotRunner {
         }
     }
 
-    func isRunning(_ bot: BotConfig) -> Bool {
-        bot.status == .running
-    }
+    /// Nuclear stop scoped to a single account.
+    func nuclearStop(accountId: Int) async {
+        stopAll(accountId: accountId)
 
-    /// Clears the in-memory log and deletes all persisted records for the bot.
-    func clearLog(for botId: UUID) {
-        if var state = runStates[botId] {
-            state.log = []
-            runStates[botId] = state
-        }
-        clearPersistedLog(for: botId)
-    }
+        let openOrders = realtime.liveOrders.filter { $0.status == 1 && $0.accountId == accountId }
+        let openPositions = realtime.livePositions.filter { $0.accountId == accountId }
 
-    /// Called once on app launch to restart any bots whose persisted
-    /// status is `.running` — their in-memory tasks were lost on kill.
-    /// Preserves the persisted activity log rather than flushing it.
-    func restoreRunningBots(_ bots: [BotConfig]) {
-        for bot in bots where bot.status == .running {
-            restoreBot(bot)
-        }
-    }
-
-    /// Resumes a bot after a cold start without clearing its activity log.
-    private func restoreBot(_ bot: BotConfig) {
-        guard bot.isActive, !bot.indicators.isEmpty else { return }
-        guard let accountId = bot.runningOnAccountId else {
-            bot.status = .stopped
-            bot.updatedAt = Date()
-            return
-        }
-
-        let botId = bot.id
-
-        // Cancel any orphaned task just in case
-        runStates[botId]?.task?.cancel()
-
-        runningBotInfo[botId] = RunningBotInfo(contractId: bot.contractId,
-                                               accountId: accountId,
-                                               name: bot.name)
-
-        // Reload the persisted log so history survives cold starts
-        var state = BotRunState()
-        state.log = loadPersistedLog(for: botId)
-        log(botId: botId, type: .info, message: "Bot resumed after app restart", state: &state)
-
-        state.task = Task { [weak self] in
-            guard let self else { return }
-            await self.pollLoop(bot: bot)
-            await MainActor.run {
-                if bot.status == .running {
-                    bot.status = .stopped
-                    bot.updatedAt = Date()
+        await withTaskGroup(of: Void.self) { group in
+            for order in openOrders {
+                group.addTask {
+                    _ = await self.service.cancelOrder(
+                        accountId: order.accountId,
+                        orderId:   order.id
+                    )
+                }
+            }
+            for position in openPositions {
+                group.addTask {
+                    _ = await self.service.closePosition(
+                        accountId:  position.accountId,
+                        contractId: position.contractId
+                    )
                 }
             }
         }
+    }
 
-        runStates[botId] = state
+    /// Is this bot running on a specific account?
+    func isRunning(_ bot: BotConfig, accountId: Int) -> Bool {
+        let key = BotRunKey(botId: bot.id, accountId: accountId)
+        guard let state = runStates[key], let task = state.task else { return false }
+        return !task.isCancelled
+    }
+
+    /// Is this bot running on ANY account?
+    func isRunningAnywhere(_ bot: BotConfig) -> Bool {
+        runStates.keys.contains { key in
+            key.botId == bot.id && isRunning(bot, accountId: key.accountId)
+        }
+    }
+
+    /// Returns the account IDs where this bot is currently running.
+    func runningAccountIds(for bot: BotConfig) -> [Int] {
+        runStates.keys.filter { key in
+            key.botId == bot.id && {
+                guard let state = runStates[key], let task = state.task else { return false }
+                return !task.isCancelled
+            }()
+        }.map(\.accountId)
+    }
+
+    /// Get run state for a specific (bot, account) pair.
+    func runState(for bot: BotConfig, accountId: Int) -> BotRunState? {
+        runStates[BotRunKey(botId: bot.id, accountId: accountId)]
+    }
+
+    /// Clears the in-memory log and deletes all persisted records for a bot instance.
+    func clearLog(for botId: UUID, accountId: Int) {
+        let key = BotRunKey(botId: botId, accountId: accountId)
+        if var state = runStates[key] {
+            state.log = []
+            runStates[key] = state
+        }
+        clearPersistedLog(for: key)
+    }
+
+    /// Called once on app launch to restart any bot instances that were
+    /// running before a cold start/kill.
+    func restoreRunningBots(_ bots: [BotConfig]) {
+        guard let ctx = modelContext else { return }
+        let descriptor = FetchDescriptor<BotRunRecord>()
+        guard let records = try? ctx.fetch(descriptor) else { return }
+
+        let botMap = Dictionary(uniqueKeysWithValues: bots.map { ($0.id, $0) })
+
+        for record in records {
+            guard let bot = botMap[record.botId] else {
+                // Bot no longer exists — clean up record
+                ctx.delete(record)
+                continue
+            }
+            restoreInstance(bot: bot, accountId: record.accountId)
+        }
+        try? ctx.save()
+    }
+
+    /// Resumes a bot instance after a cold start without clearing its activity log.
+    private func restoreInstance(bot: BotConfig, accountId: Int) {
+        guard bot.isActive, !bot.indicators.isEmpty else { return }
+
+        let key = BotRunKey(botId: bot.id, accountId: accountId)
+
+        // Cancel any orphaned task just in case
+        runStates[key]?.task?.cancel()
+
+        runningBotInfo[key] = RunningBotInfo(contractId: bot.contractId, name: bot.name)
+
+        // Reload the persisted log so history survives cold starts
+        var state = BotRunState()
+        state.log = loadPersistedLog(for: key)
+
+        // Restore session P&L from the run record
+        if let ctx = modelContext {
+            let botId = key.botId
+            let acctId = key.accountId
+            let descriptor = FetchDescriptor<BotRunRecord>(
+                predicate: #Predicate { $0.botId == botId && $0.accountId == acctId }
+            )
+            if let record = try? ctx.fetch(descriptor).first {
+                state.sessionPnL = record.sessionPnL
+                state.sessionTradeCount = record.sessionTradeCount
+            }
+        }
+
+        log(key: key, type: .info, message: "Bot resumed after app restart", state: &state)
+
+        state.task = Task { [weak self] in
+            guard let self else { return }
+            await self.pollLoop(bot: bot, accountId: accountId)
+        }
+
+        runStates[key] = state
     }
 
     // MARK: - Polling Loop
 
-    private func pollLoop(bot: BotConfig) async {
+    private func pollLoop(bot: BotConfig, accountId: Int) async {
         while !Task.isCancelled {
-            await pollOnce(bot: bot)
+            await pollOnce(bot: bot, accountId: accountId)
             let interval = pollingInterval(for: bot)
             try? await Task.sleep(for: .seconds(interval))
         }
     }
 
-    private func pollOnce(bot: BotConfig) async {
-        let botId = bot.id
+    private func pollOnce(bot: BotConfig, accountId: Int) async {
+        let key = BotRunKey(botId: bot.id, accountId: accountId)
 
         // Fetch bars
         let bars = await service.retrieveBarsForBot(bot, daysBack: 7, limit: 500)
 
         guard !bars.isEmpty else {
-            logToState(botId: botId, type: .error, message: "Failed to fetch bars (0 returned)")
+            logToState(key: key, type: .error, message: "Failed to fetch bars (0 returned)")
             return
         }
 
         // Update state
-        updateState(botId: botId) { state in
+        updateState(key: key) { state in
             state.lastBarTime = bars.last?.t
             state.lastPollTime = Date()
         }
 
-        logToState(botId: botId, type: .info, message: "Fetched \(bars.count) bars")
+        logToState(key: key, type: .info, message: "Fetched \(bars.count) bars")
 
         // Evaluate indicators
         let signal = IndicatorEngine.evaluateAll(bars: bars, configs: bot.indicators)
 
-        updateState(botId: botId) { state in
+        updateState(key: key) { state in
             state.lastSignal = signal
         }
 
         switch signal {
         case .buy:
-            logToState(botId: botId, type: .signal, message: "Signal: BUY")
+            logToState(key: key, type: .signal, message: "Signal: BUY")
             if bot.tradeDirection == .shortOnly {
-                logToState(botId: botId, type: .info, message: "Skipped: bot set to Shorts Only")
+                logToState(key: key, type: .info, message: "Skipped: bot set to Shorts Only")
                 return
             }
         case .sell:
-            logToState(botId: botId, type: .signal, message: "Signal: SELL")
+            logToState(key: key, type: .signal, message: "Signal: SELL")
             if bot.tradeDirection == .longOnly {
-                logToState(botId: botId, type: .info, message: "Skipped: bot set to Longs Only")
+                logToState(key: key, type: .info, message: "Skipped: bot set to Longs Only")
                 return
             }
         case .neutral:
-            logToState(botId: botId, type: .signal, message: "Signal: Neutral")
+            logToState(key: key, type: .signal, message: "Signal: Neutral")
             return
         }
 
         // Handle non-neutral signal
-        await handleSignal(signal, bot: bot)
+        await handleSignal(signal, bot: bot, accountId: accountId)
 
         // Refresh session P&L from matched live trades
-        updateSessionPnL(botId: botId)
+        updateSessionPnL(key: key)
     }
 
     // MARK: - Signal → Order
 
-    private func handleSignal(_ signal: Signal, bot: BotConfig) async {
-        let botId = bot.id
+    private func handleSignal(_ signal: Signal, bot: BotConfig, accountId: Int) async {
+        let key = BotRunKey(botId: bot.id, accountId: accountId)
         let side: OrderSide = signal == .buy ? .bid : .ask
-
-        guard let accountId = runningBotInfo[botId]?.accountId else {
-            logToState(botId: botId, type: .error, message: "No account context for running bot")
-            return
-        }
 
         // Check for existing position
         let existingPosition = realtime.livePositions.first {
@@ -362,7 +454,7 @@ class BotRunner {
         if let position = existingPosition {
             let posDir = position.isLong ? "long" : "short"
             let sigDir = signal == .buy ? "buy" : "sell"
-            logToState(botId: botId, type: .info,
+            logToState(key: key, type: .info,
                        message: "Position exists (\(posDir)), skipping \(sigDir) entry")
             return
         }
@@ -382,41 +474,55 @@ class BotRunner {
             type: .market,
             side: side,
             size: bot.quantity,
-            customTag: "bot-\(botId.uuidString.prefix(8))-\(UUID().uuidString.prefix(8))",
+            customTag: "bot-\(bot.id.uuidString.prefix(8))-\(UUID().uuidString.prefix(8))",
             stopLoss: stopLoss,
             takeProfit: takeProfit
         )
 
         if let orderId {
-            updateState(botId: botId) { state in
+            updateState(key: key) { state in
                 state.placedOrderIds.insert(orderId)
             }
-            logToState(botId: botId, type: .order,
+            logToState(key: key, type: .order,
                        message: "Placed \(side.label) order #\(orderId) (qty: \(bot.quantity))")
         } else {
             let errorMsg = service.errorMessage ?? "unknown error"
-            logToState(botId: botId, type: .error,
+            logToState(key: key, type: .error,
                        message: "Order placement failed: \(errorMsg)")
-            logToState(botId: botId, type: .info,
+            logToState(key: key, type: .info,
                        message: "Stopping bot due to order error")
-            stop(bot: bot)
-            bot.status = .error
-            bot.updatedAt = Date()
+            stopInstance(key: key, bot: bot)
         }
     }
 
     // MARK: - Session P&L
 
-    private func updateSessionPnL(botId: UUID) {
-        guard let orderIds = runStates[botId]?.placedOrderIds, !orderIds.isEmpty else { return }
+    private func updateSessionPnL(key: BotRunKey) {
+        guard let orderIds = runStates[key]?.placedOrderIds, !orderIds.isEmpty else { return }
         let matched = realtime.liveTrades.filter {
             orderIds.contains($0.orderId) && !$0.voided && $0.profitAndLoss != nil
         }
         let pnl = matched.compactMap { $0.profitAndLoss }.reduce(0, +)
-        updateState(botId: botId) { state in
+        let count = matched.count
+        updateState(key: key) { state in
             state.sessionPnL = pnl
-            state.sessionTradeCount = matched.count
+            state.sessionTradeCount = count
         }
+        flushSessionPnL(key: key, pnl: pnl, tradeCount: count)
+    }
+
+    /// Persists session P&L to the run record so it survives force closes.
+    private func flushSessionPnL(key: BotRunKey, pnl: Double, tradeCount: Int) {
+        guard let ctx = modelContext else { return }
+        let botId = key.botId
+        let accountId = key.accountId
+        let descriptor = FetchDescriptor<BotRunRecord>(
+            predicate: #Predicate { $0.botId == botId && $0.accountId == accountId }
+        )
+        guard let record = try? ctx.fetch(descriptor).first else { return }
+        record.sessionPnL = pnl
+        record.sessionTradeCount = tradeCount
+        try? ctx.save()
     }
 
     // MARK: - Polling Interval
@@ -438,8 +544,8 @@ class BotRunner {
 
     // MARK: - Logging Helpers
 
-    private func log(botId: UUID, type: BotLogType, message: String, state: inout BotRunState) {
-        let entry = BotLogEntry(timestamp: Date(), botId: botId, type: type, message: message)
+    private func log(key: BotRunKey, type: BotLogType, message: String, state: inout BotRunState) {
+        let entry = BotLogEntry(timestamp: Date(), botId: key.botId, accountId: key.accountId, type: type, message: message)
         state.log.insert(entry, at: 0)
         if state.log.count > 200 {
             state.log = Array(state.log.prefix(200))
@@ -452,47 +558,84 @@ class BotRunner {
     private func insertLogRecord(_ entry: BotLogEntry) {
         guard let ctx = modelContext else { return }
         ctx.insert(BotLogEntryRecord(entry: entry))
-        trimLogRecords(botId: entry.botId, in: ctx)
+        trimLogRecords(botId: entry.botId, accountId: entry.accountId, in: ctx)
         try? ctx.save()
     }
 
-    /// Keeps only the 200 most-recent records for a given bot.
-    private func trimLogRecords(botId: UUID, in ctx: ModelContext) {
+    /// Keeps only the 200 most-recent records for a given bot instance.
+    private func trimLogRecords(botId: UUID, accountId: Int, in ctx: ModelContext) {
         let descriptor = FetchDescriptor<BotLogEntryRecord>(
-            predicate: #Predicate { $0.botId == botId },
+            predicate: #Predicate { $0.botId == botId && $0.accountId == accountId },
             sortBy:    [SortDescriptor(\.timestamp, order: .reverse)]
         )
         guard let all = try? ctx.fetch(descriptor), all.count > 200 else { return }
         Array(all.dropFirst(200)).forEach { ctx.delete($0) }
     }
 
-    private func loadPersistedLog(for botId: UUID) -> [BotLogEntry] {
+    private func loadPersistedLog(for key: BotRunKey) -> [BotLogEntry] {
         guard let ctx = modelContext else { return [] }
+        let botId = key.botId
+        let accountId = key.accountId
         let descriptor = FetchDescriptor<BotLogEntryRecord>(
-            predicate: #Predicate { $0.botId == botId },
+            predicate: #Predicate { $0.botId == botId && $0.accountId == accountId },
             sortBy:    [SortDescriptor(\.timestamp, order: .reverse)]
         )
         return ((try? ctx.fetch(descriptor)) ?? []).map { $0.asLogEntry() }
     }
 
-    private func clearPersistedLog(for botId: UUID) {
+    private func clearPersistedLog(for key: BotRunKey) {
         guard let ctx = modelContext else { return }
+        let botId = key.botId
+        let accountId = key.accountId
         let descriptor = FetchDescriptor<BotLogEntryRecord>(
-            predicate: #Predicate { $0.botId == botId }
+            predicate: #Predicate { $0.botId == botId && $0.accountId == accountId }
         )
         ((try? ctx.fetch(descriptor)) ?? []).forEach { ctx.delete($0) }
         try? ctx.save()
     }
 
-    private func logToState(botId: UUID, type: BotLogType, message: String) {
-        var state = runStates[botId] ?? BotRunState()
-        log(botId: botId, type: type, message: message, state: &state)
-        runStates[botId] = state
+    private func logToState(key: BotRunKey, type: BotLogType, message: String) {
+        var state = runStates[key] ?? BotRunState()
+        log(key: key, type: type, message: message, state: &state)
+        runStates[key] = state
     }
 
-    private func updateState(botId: UUID, update: (inout BotRunState) -> Void) {
-        var state = runStates[botId] ?? BotRunState()
+    private func updateState(key: BotRunKey, update: (inout BotRunState) -> Void) {
+        var state = runStates[key] ?? BotRunState()
         update(&state)
-        runStates[botId] = state
+        runStates[key] = state
+    }
+
+    // MARK: - Run Record Persistence (cold-start restore)
+
+    private func persistRunRecord(key: BotRunKey) {
+        guard let ctx = modelContext else { return }
+        // Avoid duplicates
+        let botId = key.botId
+        let accountId = key.accountId
+        let descriptor = FetchDescriptor<BotRunRecord>(
+            predicate: #Predicate { $0.botId == botId && $0.accountId == accountId }
+        )
+        if (try? ctx.fetchCount(descriptor)) ?? 0 > 0 { return }
+        ctx.insert(BotRunRecord(botId: key.botId, accountId: key.accountId))
+        try? ctx.save()
+    }
+
+    private func removeRunRecord(key: BotRunKey) {
+        guard let ctx = modelContext else { return }
+        let botId = key.botId
+        let accountId = key.accountId
+        let descriptor = FetchDescriptor<BotRunRecord>(
+            predicate: #Predicate { $0.botId == botId && $0.accountId == accountId }
+        )
+        ((try? ctx.fetch(descriptor)) ?? []).forEach { ctx.delete($0) }
+        try? ctx.save()
+    }
+
+    private func removeAllRunRecords() {
+        guard let ctx = modelContext else { return }
+        let descriptor = FetchDescriptor<BotRunRecord>()
+        ((try? ctx.fetch(descriptor)) ?? []).forEach { ctx.delete($0) }
+        try? ctx.save()
     }
 }

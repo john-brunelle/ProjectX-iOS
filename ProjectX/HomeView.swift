@@ -37,6 +37,8 @@ struct HomeView: View {
     @State private var path = NavigationPath()
     @State private var showStopAllConfirmation = false
     @State private var showNuclearConfirmation = false
+    @State private var showGlobalStopAllConfirmation = false
+    @State private var showGlobalNuclearConfirmation = false
     @State private var showStopActions = false
     @State private var showAddBotSheet = false
     @State private var conflictHintBotId: UUID?
@@ -79,6 +81,25 @@ struct HomeView: View {
                 }
             }
             .toolbar {
+                if botRunner.runningCount > 0 {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Menu {
+                            Button(role: .destructive) {
+                                showGlobalStopAllConfirmation = true
+                            } label: {
+                                Label("Stop All Bots (\(botRunner.runningCount))", systemImage: "stop.circle.fill")
+                            }
+                            Button(role: .destructive) {
+                                showGlobalNuclearConfirmation = true
+                            } label: {
+                                Label("Nuclear Stop — All Accounts", systemImage: "exclamationmark.octagon.fill")
+                            }
+                        } label: {
+                            Image(systemName: "exclamationmark.octagon.fill")
+                                .foregroundStyle(.red)
+                        }
+                    }
+                }
                 ToolbarItem(placement: .primaryAction) {
                     Button {
                         Task { await realtime.refreshHomeData() }
@@ -101,28 +122,57 @@ struct HomeView: View {
             }
         }
         .confirmationDialog(
-            "Stop All Bots?",
+            "Stop Bots on This Account?",
             isPresented: $showStopAllConfirmation,
             titleVisibility: .visible
         ) {
-            Button("Stop All \(botRunner.runningCount) Bot\(botRunner.runningCount == 1 ? "" : "s")", role: .destructive) {
+            if let accountId = service.activeAccount?.id {
+                let count = botRunner.runningCount(accountId: accountId)
+                Button("Stop \(count) Bot\(count == 1 ? "" : "s") on This Account", role: .destructive) {
+                    botRunner.stopAll(accountId: accountId)
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This will stop all bots running on this account. Bots on other accounts are unaffected. Open positions will remain open.")
+        }
+        .confirmationDialog(
+            "Nuclear Stop — This Account?",
+            isPresented: $showNuclearConfirmation,
+            titleVisibility: .visible
+        ) {
+            if let accountId = service.activeAccount?.id {
+                Button("Stop Bots, Cancel Orders & Close Positions", role: .destructive) {
+                    Task { await botRunner.nuclearStop(accountId: accountId) }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This will stop all bots on this account, cancel its open orders, and close its open positions. Other accounts are unaffected. This cannot be undone.")
+        }
+        .confirmationDialog(
+            "Stop All Bots?",
+            isPresented: $showGlobalStopAllConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Stop All \(botRunner.runningCount) Bot\(botRunner.runningCount == 1 ? "" : "s") on All Accounts", role: .destructive) {
                 botRunner.stopAll()
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This will immediately stop all running bots. Any open positions will remain open.")
+            Text("This will immediately stop every running bot across all accounts. Open positions will remain open.")
         }
         .confirmationDialog(
-            "Nuclear Stop?",
-            isPresented: $showNuclearConfirmation,
+            "Nuclear Stop — All Accounts?",
+            isPresented: $showGlobalNuclearConfirmation,
             titleVisibility: .visible
         ) {
-            Button("Stop Bots, Cancel Orders & Close Positions", role: .destructive) {
+            Button("Stop All Bots, Cancel All Orders & Close All Positions", role: .destructive) {
                 Task { await botRunner.nuclearStop() }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This will stop all bots, cancel every open order, and close every open position. This cannot be undone.")
+            Text("This will stop every bot, cancel every open order, and close every open position across all accounts. This cannot be undone.")
         }
         .onChange(of: botRunner.runningCount) { old, new in
             if old == 0 && new > 0 {
@@ -152,7 +202,7 @@ struct HomeView: View {
         destination: HomeDestination,
         @ViewBuilder content: () -> Content
     ) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Label(title, systemImage: systemImage)
                     .font(.subheadline.weight(.semibold))
@@ -398,11 +448,12 @@ struct HomeView: View {
             let accountBots = bots.filter { activeAccountBotIds.contains($0.id) && !$0.isArchived }
             if !accountBots.isEmpty {
                 VStack(spacing: 14) {
-                    Spacer().frame(height: 2)
-                    ForEach(accountBots.filter(\.isActive).sorted { a, _ in botRunner.isRunning(a) }.prefix(5)) { bot in
-                        let running = botRunner.isRunning(bot)
-                        let state = botRunner.runStates[bot.id]
+                    ForEach(accountBots.filter(\.isActive).sorted { a, _ in
+                        botRunner.isRunning(a, accountId: service.activeAccount?.id ?? 0)
+                    }.prefix(5)) { bot in
                         let activeAccountId = service.activeAccount?.id ?? 0
+                        let running = botRunner.isRunning(bot, accountId: activeAccountId)
+                        let state = botRunner.runState(for: bot, accountId: activeAccountId)
                         let conflictBot = running ? nil : botRunner.runningBotName(
                             on: bot.contractId, accountId: activeAccountId, excluding: bot.id)
 
@@ -427,16 +478,6 @@ struct HomeView: View {
                                     .foregroundStyle(.secondary)
                                     .lineLimit(1)
 
-                                if running, let state {
-                                    Text(state.lastSignal == .buy ? "BUY" :
-                                         state.lastSignal == .sell ? "SELL" : "—")
-                                        .font(.caption2.weight(.bold))
-                                        .foregroundStyle(
-                                            state.lastSignal == .buy ? .green :
-                                            state.lastSignal == .sell ? .red : .secondary
-                                        )
-                                }
-
                                 Spacer()
 
                                 // Start / Stop button
@@ -453,7 +494,7 @@ struct HomeView: View {
                                 } else {
                                     Button {
                                         if running {
-                                            botRunner.stop(bot: bot)
+                                            botRunner.stop(bot: bot, accountId: activeAccountId)
                                         } else {
                                             botRunner.start(bot: bot, accountId: activeAccountId)
                                         }
@@ -507,7 +548,33 @@ struct HomeView: View {
                                         .foregroundStyle(.tertiary)
                                 }
                             }
+
+                            // Poll status (only while running)
+                            if running, let state {
+                                HStack(spacing: 8) {
+                                    Circle()
+                                        .fill(.green)
+                                        .frame(width: 6, height: 6)
+                                        .modifier(PulsingModifier())
+
+                                    Text(state.lastSignal == .buy ? "BUY" :
+                                         state.lastSignal == .sell ? "SELL" : "NEUTRAL")
+                                        .font(.caption2.weight(.semibold))
+                                        .foregroundStyle(
+                                            state.lastSignal == .buy ? .green :
+                                            state.lastSignal == .sell ? .red : .secondary
+                                        )
+
+                                    if let pollTime = state.lastPollTime {
+                                        Text("Polled \(pollTime, style: .relative) ago")
+                                            .font(.caption2)
+                                            .foregroundStyle(.tertiary)
+                                    }
+                                }
+                            }
                         }
+                        .padding(10)
+                        .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: 8))
                         .contentShape(Rectangle())
                         .onTapGesture { selectedBot = bot }
                     }
@@ -518,10 +585,12 @@ struct HomeView: View {
                             .foregroundStyle(.tertiary)
                     }
 
-                    if botRunner.runningCount > 0 {
+                    if let activeAccountId = service.activeAccount?.id,
+                       botRunner.runningCount(accountId: activeAccountId) > 0 {
+                        let acctRunning = botRunner.runningCount(accountId: activeAccountId)
                         Divider()
 
-                        // Disclosure header — visible only when bots are running
+                        // Disclosure header — visible only when bots are running on this account
                         HStack {
                             Text("Stop Actions")
                                 .font(.caption.weight(.semibold))
@@ -540,12 +609,12 @@ struct HomeView: View {
 
                         if showStopActions {
                             VStack(spacing: 8) {
-                                // Stop bots only
+                                // Stop bots on this account only
                                 Button(role: .destructive) {
                                     showStopAllConfirmation = true
                                 } label: {
                                     Label(
-                                        "Stop All Bots (\(botRunner.runningCount) Running)",
+                                        "Stop Bots on This Account (\(acctRunning))",
                                         systemImage: "stop.circle.fill"
                                     )
                                     .font(.caption.weight(.semibold))
@@ -554,7 +623,7 @@ struct HomeView: View {
                                 }
                                 .buttonStyle(.plain)
 
-                                // Nuclear stop — bots + orders + positions
+                                // Nuclear stop — bots + orders + positions on this account
                                 Button(role: .destructive) {
                                     showNuclearConfirmation = true
                                 } label: {
@@ -567,6 +636,10 @@ struct HomeView: View {
                                     .frame(maxWidth: .infinity)
                                 }
                                 .buttonStyle(.plain)
+
+                                Text("Only affects this account's bots and positions.")
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
                             }
                         }
                     }

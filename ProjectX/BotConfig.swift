@@ -67,10 +67,6 @@ final class BotConfig {
     var contractId: String
     var contractName: String   // denormalized for display
 
-    // Runtime: which account this bot is currently running on (nil when stopped).
-    // Persisted so cold-start restore knows which account to reconnect.
-    var runningOnAccountId: Int?
-
     // Bar Configuration
     var barUnit: Int           // raw value of BarUnit (1=sec, 2=min, 3=hr, 4=day, 5=wk, 6=mo)
     var barUnitNumber: Int     // e.g. 5 for "5-minute bars"
@@ -81,10 +77,13 @@ final class BotConfig {
     var quantity: Int          // fixed contract quantity per trade
     var tradeDirectionRaw: String  // TradeDirectionFilter raw value
 
+    // Legacy — kept so SwiftData doesn't need a destructive migration
+    var runningOnAccountId: Int?
+    var statusRaw: String = "stopped"
+
     // Status
     var isActive: Bool = true
     var isArchived: Bool = false
-    var statusRaw: String
 
     // Timestamps
     var createdAt: Date
@@ -99,11 +98,6 @@ final class BotConfig {
     var indicators: [IndicatorConfig]
 
     // MARK: Computed Properties
-
-    var status: BotStatus {
-        get { BotStatus(rawValue: statusRaw) ?? .stopped }
-        set { statusRaw = newValue.rawValue }
-    }
 
     var tradeDirection: TradeDirectionFilter {
         get { TradeDirectionFilter(rawValue: tradeDirectionRaw) ?? .both }
@@ -146,7 +140,6 @@ final class BotConfig {
         self.takeProfitTicks = takeProfitTicks
         self.quantity = quantity
         self.tradeDirectionRaw = tradeDirection.rawValue
-        self.statusRaw = BotStatus.stopped.rawValue
         self.createdAt = Date()
         self.updatedAt = Date()
         self.indicators = indicators

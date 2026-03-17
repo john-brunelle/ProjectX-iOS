@@ -23,6 +23,7 @@ struct BotsView: View {
     private var botsRaw: [BotConfig]
 
     @Query private var allAssignments: [AccountBotAssignment]
+    @Query private var allProfiles: [AccountProfile]
 
     var isEmbedded: Bool = false
 
@@ -40,7 +41,9 @@ struct BotsView: View {
         case .archived: base = botsRaw.filter {  $0.isArchived }
         }
         return base.sorted { a, b in
-            if filter == .active, a.isActive != b.isActive { return a.isActive }
+            let aRunning = botRunner.isRunningAnywhere(a)
+            let bRunning = botRunner.isRunningAnywhere(b)
+            if aRunning != bRunning { return aRunning }
             return a.name.localizedCompare(b.name) == .orderedAscending
         }
     }
@@ -84,8 +87,11 @@ struct BotsView: View {
                     } else {
                         Section {
                             ForEach(filteredBots) { bot in
-                                BotRow(bot: bot, runState: botRunner.runStates[bot.id],
-                                       accountNames: accountNames(for: bot))
+                                BotRow(bot: bot,
+                                       isRunning: botRunner.isRunningAnywhere(bot),
+                                       runStates: botRunner.runStates.filter { $0.key.botId == bot.id },
+                                       accountNames: accountNames(for: bot),
+                                       accountNameMap: accountNameMap)
                                     .contentShape(Rectangle())
                                     .onTapGesture { selectedBot = bot }
                                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
@@ -180,7 +186,7 @@ struct BotsView: View {
     }
 
     private func archiveBot(_ bot: BotConfig) {
-        if botRunner.isRunning(bot) { botRunner.stop(bot: bot) }
+        if botRunner.isRunningAnywhere(bot) { botRunner.stopAllInstances(of: bot) }
         bot.isArchived = true
         bot.isActive = false
         bot.updatedAt = Date()
@@ -189,7 +195,16 @@ struct BotsView: View {
 
     private func accountNames(for bot: BotConfig) -> [String] {
         let assignedIds = allAssignments.filter { $0.botId == bot.id }.map(\.accountId)
-        return service.accounts.filter { assignedIds.contains($0.id) }.map(\.name)
+        return service.accounts.filter { assignedIds.contains($0.id) }.map { displayName(for: $0) }
+    }
+
+    private var accountNameMap: [Int: String] {
+        Dictionary(uniqueKeysWithValues: service.accounts.map { ($0.id, displayName(for: $0)) })
+    }
+
+    private func displayName(for account: Account) -> String {
+        let alias = allProfiles.first { $0.accountId == account.id }?.alias.trimmingCharacters(in: .whitespaces) ?? ""
+        return alias.isEmpty ? account.name : alias
     }
 
     private func unarchiveBot(_ bot: BotConfig) {
@@ -203,8 +218,35 @@ struct BotsView: View {
 
 struct BotRow: View {
     let bot: BotConfig
-    let runState: BotRunState?
+    let isRunning: Bool
+    var runStates: [BotRunKey: BotRunState] = [:]
     var accountNames: [String] = []
+    var accountNameMap: [Int: String] = [:]
+
+    private var statusLabel: String {
+        if isRunning { return "Running" }
+        return bot.isActive ? "Active" : "Inactive"
+    }
+
+    private var statusIcon: String {
+        if isRunning { return "play.circle.fill" }
+        return bot.isActive ? "checkmark.circle.fill" : "stop.circle.fill"
+    }
+
+    private var statusColor: Color {
+        if isRunning { return .green }
+        return bot.isActive ? .blue : .secondary
+    }
+
+    private var aggregatedSessionPnL: Double {
+        runStates.values.reduce(0) { $0 + $1.sessionPnL }
+    }
+
+    private var activeRunKeys: [BotRunKey] {
+        runStates.filter { _, state in
+            state.task != nil && !(state.task?.isCancelled ?? true)
+        }.keys.sorted { $0.accountId < $1.accountId }
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -224,76 +266,83 @@ struct BotRow: View {
             .buttonStyle(.plain)
 
             VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(bot.name)
-                    .font(.headline)
-                Spacer()
-                Label(bot.status.displayName, systemImage: bot.status.systemImage)
-                    .font(.caption)
-                    .foregroundStyle(statusColor)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(.fill.tertiary, in: Capsule())
-            }
-            HStack(spacing: 12) {
-                Label(bot.contractName, systemImage: "doc.text")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Label(bot.barSizeLabel, systemImage: "chart.bar.fill")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Label("\(bot.indicators.count)", systemImage: "waveform.path.ecg")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            if !accountNames.isEmpty {
-                Text(accountNames.joined(separator: ", "))
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            }
-
-            // P&L summary row
-            HStack(spacing: 4) {
-                Image(systemName: bot.lifetimePnL >= 0 ? "arrow.up.right" : "arrow.down.right")
-                    .font(.caption2)
-                Text(formatPnL(bot.lifetimePnL))
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                Text("(\(bot.lifetimeTradeCount) trade\(bot.lifetimeTradeCount == 1 ? "" : "s"))")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                if bot.status == .running, let state = runState, state.sessionPnL != 0 {
-                    Text("· \(formatPnL(state.sessionPnL)) session")
+                HStack {
+                    Text(bot.name)
+                        .font(.headline)
+                    Spacer()
+                    Label(statusLabel, systemImage: statusIcon)
+                        .font(.caption)
+                        .foregroundStyle(statusColor)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(.fill.tertiary, in: Capsule())
+                }
+                HStack(spacing: 12) {
+                    Label(bot.contractName, systemImage: "doc.text")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Label(bot.barSizeLabel, systemImage: "chart.bar.fill")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Label("\(bot.indicators.count)", systemImage: "waveform.path.ecg")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if !accountNames.isEmpty {
+                    Text(accountNames.joined(separator: ", "))
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                 }
-            }
-            .foregroundStyle(bot.lifetimePnL >= 0 ? Color.green : Color.red)
 
-            // Live status when running
-            if bot.status == .running, let state = runState {
-                HStack(spacing: 12) {
-                    // Pulsing dot
-                    Circle()
-                        .fill(.green)
-                        .frame(width: 8, height: 8)
-                        .modifier(PulsingModifier())
-
-                    // Last signal
-                    Text(signalLabel(state.lastSignal))
+                // P&L summary row
+                HStack(spacing: 4) {
+                    Image(systemName: bot.lifetimePnL >= 0 ? "arrow.up.right" : "arrow.down.right")
                         .font(.caption2)
+                    Text(formatPnL(bot.lifetimePnL))
+                        .font(.caption)
                         .fontWeight(.semibold)
-                        .foregroundStyle(signalColor(state.lastSignal))
-
-                    // Last poll time
-                    if let pollTime = state.lastPollTime {
-                        Text("Polled \(pollTime, style: .relative) ago")
+                    Text("(\(bot.lifetimeTradeCount) trade\(bot.lifetimeTradeCount == 1 ? "" : "s"))")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    if isRunning && aggregatedSessionPnL != 0 {
+                        Text("· \(formatPnL(aggregatedSessionPnL)) session")
                             .font(.caption2)
                             .foregroundStyle(.tertiary)
                     }
                 }
+                .foregroundStyle(bot.lifetimePnL >= 0 ? Color.green : Color.red)
+
+                // Live status per running instance
+                if isRunning {
+                    ForEach(activeRunKeys, id: \.self) { key in
+                        if let state = runStates[key] {
+                            HStack(spacing: 8) {
+                                Circle()
+                                    .fill(.green)
+                                    .frame(width: 8, height: 8)
+                                    .modifier(PulsingModifier())
+
+                                if activeRunKeys.count > 1 {
+                                    Text(accountNameMap[key.accountId] ?? "Acct \(key.accountId)")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+
+                                Text(signalLabel(state.lastSignal))
+                                    .font(.caption2)
+                                    .fontWeight(.semibold)
+                                    .foregroundStyle(signalColor(state.lastSignal))
+
+                                if let pollTime = state.lastPollTime {
+                                    Text("Polled \(pollTime, style: .relative) ago")
+                                        .font(.caption2)
+                                        .foregroundStyle(.tertiary)
+                                }
+                            }
+                        }
+                    }
+                }
             }
-        }
         }
         .padding(.vertical, 4)
         .opacity(bot.isActive ? 1.0 : 0.6)
@@ -306,15 +355,6 @@ struct BotRow: View {
         formatter.positivePrefix = "+"
         formatter.maximumFractionDigits = 2
         return formatter.string(from: NSNumber(value: value)) ?? "$0.00"
-    }
-
-    private var statusColor: Color {
-        switch bot.status {
-        case .running: .green
-        case .paused:  .orange
-        case .error:   .red
-        case .stopped: .secondary
-        }
     }
 
     private func signalLabel(_ signal: Signal) -> String {

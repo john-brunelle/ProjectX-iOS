@@ -167,7 +167,7 @@ struct AccountDetailView: View {
                                     .foregroundStyle(.secondary)
                             }
                             Spacer()
-                            if botRunner.isRunning(bot) {
+                            if botRunner.isRunning(bot, accountId: account.id) {
                                 Text("Running")
                                     .font(.caption2.weight(.bold))
                                     .foregroundStyle(.green)
