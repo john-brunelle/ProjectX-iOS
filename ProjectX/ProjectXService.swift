@@ -15,6 +15,7 @@ class ProjectXService {
 
     var isAuthenticated = false
     var accounts: [Account] = []
+    var activeAccount: Account? = nil
     var errorMessage: String?
 
     var savedUsername: String? { KeychainHelper.load(for: kUsername) }
@@ -59,6 +60,7 @@ class ProjectXService {
         KeychainHelper.delete(for: kToken)
         isAuthenticated = false
         accounts = []
+        activeAccount = nil
     }
 
     func fetchAccounts(onlyActive: Bool = true) async {
@@ -73,6 +75,9 @@ class ProjectXService {
             return
         }
         accounts = response.accounts ?? []
+        if activeAccount == nil {
+            activeAccount = accounts.first
+        }
         errorMessage = nil
     }
 

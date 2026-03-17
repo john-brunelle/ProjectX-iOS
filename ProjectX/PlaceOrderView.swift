@@ -152,7 +152,7 @@ struct PlaceOrderView: View {
                     Button("Cancel") { dismiss() }
                 }
             }
-            .onAppear { selectedAccount = service.accounts.first }
+            .onAppear { selectedAccount = service.activeAccount }
             .alert(resultMessage, isPresented: $showResult) {
                 Button("OK") {
                     if resultMessage.hasPrefix("✅") { dismiss() }

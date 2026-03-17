@@ -47,7 +47,8 @@ struct AuthView: View {
 
     private func login() async {
         isLoading = true
-        _ = await service.login(userName: userName, apiKey: apiKey)
+        let ok = await service.login(userName: userName, apiKey: apiKey)
+        if ok { await service.fetchAccounts() }
         isLoading = false
     }
 }

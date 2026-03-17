@@ -56,14 +56,24 @@ class RealtimeService {
 
     func connectUserHub(accountId: Int) {
         guard let token = ProjectXService.shared.sessionToken else {
-            print("RealtimeService: No session token")
+            NetworkLogger.shared.log(NetworkLogger.Entry(
+                timestamp: Date(), source: .signalR, method: "connectUserHub",
+                path: "UserHub", statusCode: nil, duration: nil,
+                requestBody: nil, responseBody: nil, error: "No session token"
+            ))
             return
         }
+        NetworkLogger.shared.log(NetworkLogger.Entry(
+            timestamp: Date(), source: .signalR, method: "connectUserHub",
+            path: "UserHub", statusCode: nil, duration: nil,
+            requestBody: "accountId=\(accountId)", responseBody: "attempting...", error: nil
+        ))
         subscribedAccountId = accountId
 
         let url = URL(string: "\(userHubURL)?access_token=\(token)")!
 
         userDelegate = HubDelegate(
+            hubName: "UserHub",
             onOpen: { [weak self] _ in
                 Task { @MainActor in
                     self?.isUserConnected = true
@@ -82,7 +92,10 @@ class RealtimeService {
         )
 
         userConnection = HubConnectionBuilder(url: url)
-            .withLogging(minLogLevel: .warning)
+            .withHttpConnectionOptions { options in
+                options.skipNegotiation = true
+            }
+            .withLogging(minLogLevel: .debug)
             .withAutoReconnect()
             .withHubConnectionDelegate(delegate: userDelegate!)
             .build()
@@ -97,6 +110,22 @@ class RealtimeService {
         }
 
         userConnection?.start()
+    }
+
+    func switchAccount(to accountId: Int) {
+        NetworkLogger.shared.log(NetworkLogger.Entry(
+            timestamp: Date(), source: .signalR, method: "switchAccount",
+            path: "UserHub", statusCode: nil, duration: nil,
+            requestBody: "accountId=\(accountId)", responseBody: "stopping+reconnecting", error: nil
+        ))
+        userConnection?.stop()
+        userConnection = nil
+        userDelegate = nil
+        isUserConnected = false
+        liveOrders    = []
+        livePositions = []
+        liveTrades    = []
+        connectUserHub(accountId: accountId)
     }
 
     private func subscribeUserHub() {
@@ -309,6 +338,7 @@ class RealtimeService {
             let url = URL(string: "\(marketHubURL)?access_token=\(token)")!
 
             marketDelegate = HubDelegate(
+                hubName: "MarketHub",
                 onOpen: { [weak self] _ in
                     Task { @MainActor in
                         self?.isMarketConnected = true
@@ -331,7 +361,10 @@ class RealtimeService {
             )
 
             marketConnection = HubConnectionBuilder(url: url)
-                .withLogging(minLogLevel: .warning)
+                .withHttpConnectionOptions { options in
+                    options.skipNegotiation = true
+                }
+                .withLogging(minLogLevel: .debug)
                 .withAutoReconnect()
                 .withHubConnectionDelegate(delegate: marketDelegate!)
                 .build()
@@ -475,6 +508,11 @@ class RealtimeService {
     // ─────────────────────────────────────────
 
     func disconnectAll() {
+        NetworkLogger.shared.log(NetworkLogger.Entry(
+            timestamp: Date(), source: .signalR, method: "disconnectAll",
+            path: "UserHub+MarketHub", statusCode: nil, duration: nil,
+            requestBody: nil, responseBody: "stopping all connections", error: nil
+        ))
         unsubscribeUserHub()
         if let cid = subscribedContractId {
             unsubscribeMarketHub(contractId: cid)
@@ -523,33 +561,64 @@ class RealtimeService {
 // ─────────────────────────────────────────────
 
 class HubDelegate: HubConnectionDelegate {
+    private let hubName:            String
     private let onOpenHandler:      (HubConnection) -> Void
     private let onCloseHandler:     (Error?) -> Void
     private let onReconnectHandler: () -> Void
 
     init(
+        hubName:     String,
         onOpen:      @escaping (HubConnection) -> Void = { _ in },
         onClose:     @escaping (Error?) -> Void         = { _ in },
         onReconnect: @escaping () -> Void               = {}
     ) {
+        self.hubName            = hubName
         self.onOpenHandler      = onOpen
         self.onCloseHandler     = onClose
         self.onReconnectHandler = onReconnect
     }
 
     func connectionDidOpen(hubConnection: HubConnection) {
+        NetworkLogger.shared.log(NetworkLogger.Entry(
+            timestamp: Date(), source: .signalR, method: "connectionDidOpen",
+            path: hubName, statusCode: nil, duration: nil,
+            requestBody: nil, responseBody: "connected", error: nil
+        ))
         onOpenHandler(hubConnection)
     }
 
     func connectionDidFailToOpen(error: Error) {
-        print("RealtimeService: Connection failed to open: \(error)")
+        NetworkLogger.shared.log(NetworkLogger.Entry(
+            timestamp: Date(), source: .signalR, method: "connectionDidFailToOpen",
+            path: hubName, statusCode: nil, duration: nil,
+            requestBody: nil, responseBody: nil, error: error.localizedDescription
+        ))
     }
 
     func connectionDidClose(error: Error?) {
+        NetworkLogger.shared.log(NetworkLogger.Entry(
+            timestamp: Date(), source: .signalR, method: "connectionDidClose",
+            path: hubName, statusCode: nil, duration: nil,
+            requestBody: nil, responseBody: nil,
+            error: error.map { $0.localizedDescription }
+        ))
         onCloseHandler(error)
     }
 
+    func connectionWillReconnect(error: Error) {
+        NetworkLogger.shared.log(NetworkLogger.Entry(
+            timestamp: Date(), source: .signalR, method: "connectionWillReconnect",
+            path: hubName, statusCode: nil, duration: nil,
+            requestBody: nil, responseBody: nil, error: error.localizedDescription
+        ))
+    }
+
     func connectionDidReconnect() {
+        NetworkLogger.shared.log(NetworkLogger.Entry(
+            timestamp: Date(), source: .signalR, method: "connectionDidReconnect",
+            path: hubName, statusCode: nil, duration: nil,
+            requestBody: nil, responseBody: "reconnected", error: nil
+        ))
         onReconnectHandler()
     }
 }

@@ -475,7 +475,10 @@ struct BotWizardView: View {
     // MARK: - Load Existing
 
     private func loadExisting() {
-        guard let existing else { return }
+        guard let existing else {
+            selectedAccount = service.activeAccount  // new bot: pre-select the active account
+            return
+        }
         botName = existing.name
         selectedAccount = service.accounts.first { $0.id == existing.accountId }
         barUnit = existing.barUnitEnum ?? .minute

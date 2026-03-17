@@ -8,7 +8,6 @@ struct PositionsView: View {
 
     @State private var positions:       [Position] = []
     @State private var isLoading                   = false
-    @State private var selectedAccount: Account?
     @State private var positionToClose: Position?
     @State private var showPartialClose             = false
     @State private var partialCloseSize             = 1
@@ -23,21 +22,6 @@ struct PositionsView: View {
 
     @ViewBuilder private var content: some View {
         VStack(spacing: 0) {
-                // Account picker
-                if service.accounts.count > 1 {
-                    Picker("Account", selection: $selectedAccount) {
-                        ForEach(service.accounts) { acct in
-                            Text(acct.name).tag(Optional(acct))
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .padding(.horizontal)
-                    .padding(.vertical, 6)
-                    .onChange(of: selectedAccount) { _, _ in
-                        Task { await reload() }
-                    }
-                }
-
                 if isLoading {
                     ProgressView("Loading positions...")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -94,12 +78,14 @@ struct PositionsView: View {
                 }
             }
             .task {
-                selectedAccount = service.accounts.first
                 await reload()
                 while !Task.isCancelled {
                     try? await Task.sleep(for: .seconds(15))
                     await reload()
                 }
+            }
+            .onChange(of: service.activeAccount) { _, _ in
+                Task { await reload() }
             }
             // Close all confirmation
             .confirmationDialog(
@@ -137,14 +123,14 @@ struct PositionsView: View {
     // ── Data loading ──────────────────────────
 
     private func reload() async {
-        guard let account = selectedAccount else { return }
+        guard let account = service.activeAccount else { return }
         isLoading = true
         positions = await service.searchOpenPositions(accountId: account.id)
         isLoading = false
     }
 
     private func closePosition() async {
-        guard let account = selectedAccount, let position = positionToClose else { return }
+        guard let account = service.activeAccount, let position = positionToClose else { return }
         // Cancel any open orders on this contract first (bracket SL/TP)
         let openOrders = await service.searchOpenOrders(accountId: account.id)
         let bracketOrders = openOrders.filter { $0.contractId == position.contractId && $0.status == 1 }
@@ -158,7 +144,7 @@ struct PositionsView: View {
     }
 
     private func partialClose() async {
-        guard let account = selectedAccount, let position = positionToClose else { return }
+        guard let account = service.activeAccount, let position = positionToClose else { return }
         let ok = await service.partialClosePosition(
             accountId:  account.id,
             contractId: position.contractId,

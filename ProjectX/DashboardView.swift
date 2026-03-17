@@ -52,16 +52,37 @@ struct DashboardView: View {
         .environment(realtime)
         .environment(botRunner)
         .onAppear {
+            NetworkLogger.shared.log(NetworkLogger.Entry(
+                timestamp: Date(), source: .signalR, method: "DashboardView.onAppear",
+                path: "lifecycle", statusCode: nil, duration: nil,
+                requestBody: "activeAccount=\(service.activeAccount?.id.description ?? "nil")",
+                responseBody: nil, error: nil
+            ))
             // Inject model context before any bot restore/persistence calls
             botRunner.modelContext = modelContext
             // Auto-connect user hub when dashboard loads
-            if let account = service.accounts.first {
+            if let account = service.activeAccount {
                 realtime.connectUserHub(accountId: account.id)
             }
             // Restart any bots that were running before a cold start/kill
             botRunner.restoreRunningBots(allBots)
         }
+        .onChange(of: service.activeAccount) { _, newAccount in
+            NetworkLogger.shared.log(NetworkLogger.Entry(
+                timestamp: Date(), source: .signalR, method: "DashboardView.onChange(activeAccount)",
+                path: "lifecycle", statusCode: nil, duration: nil,
+                requestBody: "newAccountId=\(newAccount?.id.description ?? "nil")",
+                responseBody: nil, error: nil
+            ))
+            guard let account = newAccount else { return }
+            realtime.switchAccount(to: account.id)
+        }
         .onDisappear {
+            NetworkLogger.shared.log(NetworkLogger.Entry(
+                timestamp: Date(), source: .signalR, method: "DashboardView.onDisappear",
+                path: "lifecycle", statusCode: nil, duration: nil,
+                requestBody: nil, responseBody: "dashboard disappeared", error: nil
+            ))
             botRunner.stopAll()
             realtime.disconnectAll()
         }
@@ -99,7 +120,8 @@ struct AccountsTab: View {
                 )
             } else {
                 List(service.accounts) { account in
-                    AccountRow(account: account)
+                    AccountRow(account: account,
+                               isActive: account.id == service.activeAccount?.id)
                 }
             }
         }
@@ -137,31 +159,44 @@ struct AccountsTab: View {
         await service.fetchAccounts(onlyActive: showOnlyActive)
         isLoading = false
     }
-}
+}   
 
 struct AccountRow: View {
     let account: Account
+    var isActive: Bool = false
+
+    @Environment(ProjectXService.self) var service
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(account.name).font(.headline)
-                Spacer()
-                Text(account.balance, format: .currency(code: "USD"))
-                    .font(.headline)
-                    .foregroundStyle(account.balance >= 0 ? .green : .red)
+        Button {
+            service.activeAccount = account
+        } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text(account.name).font(.headline)
+                    if isActive {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(Color.accentColor)
+                            .font(.subheadline)
+                    }
+                    Spacer()
+                    Text(account.balance, format: .currency(code: "USD"))
+                        .font(.headline)
+                        .foregroundStyle(account.balance >= 0 ? .green : .red)
+                }
+                HStack(spacing: 12) {
+                    Label(account.canTrade ? "Can Trade" : "No Trading",
+                          systemImage: account.canTrade ? "checkmark.circle.fill" : "xmark.circle.fill")
+                        .foregroundStyle(account.canTrade ? .green : .red).font(.caption)
+                    Label(account.isVisible ? "Visible" : "Hidden",
+                          systemImage: account.isVisible ? "eye.fill" : "eye.slash.fill")
+                        .foregroundStyle(.secondary).font(.caption)
+                    Spacer()
+                    Text("ID: \(account.id)").font(.caption2).foregroundStyle(.tertiary)
+                }
             }
-            HStack(spacing: 12) {
-                Label(account.canTrade ? "Can Trade" : "No Trading",
-                      systemImage: account.canTrade ? "checkmark.circle.fill" : "xmark.circle.fill")
-                    .foregroundStyle(account.canTrade ? .green : .red).font(.caption)
-                Label(account.isVisible ? "Visible" : "Hidden",
-                      systemImage: account.isVisible ? "eye.fill" : "eye.slash.fill")
-                    .foregroundStyle(.secondary).font(.caption)
-                Spacer()
-                Text("ID: \(account.id)").font(.caption2).foregroundStyle(.tertiary)
-            }
+            .padding(.vertical, 4)
         }
-        .padding(.vertical, 4)
+        .buttonStyle(.plain)
     }
 }

@@ -5,7 +5,6 @@ struct TradesView: View {
 
     @State private var trades:          [Trade]  = []
     @State private var isLoading                 = false
-    @State private var selectedAccount: Account?
     @State private var daysBack                  = 1
 
     // Summary stats
@@ -32,21 +31,6 @@ struct TradesView: View {
 
     @ViewBuilder private var content: some View {
         VStack(spacing: 0) {
-                // Account picker
-                if service.accounts.count > 1 {
-                    Picker("Account", selection: $selectedAccount) {
-                        ForEach(service.accounts) { acct in
-                            Text(acct.name).tag(Optional(acct))
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .padding(.horizontal)
-                    .padding(.vertical, 6)
-                    .onChange(of: selectedAccount) { _, _ in
-                        Task { await reload() }
-                    }
-                }
-
                 // Days back picker
                 Picker("Period", selection: $daysBack) {
                     Text("Today").tag(1)
@@ -107,13 +91,15 @@ struct TradesView: View {
                 }
             }
             .task {
-                selectedAccount = service.accounts.first
                 await reload()
+            }
+            .onChange(of: service.activeAccount) { _, _ in
+                Task { await reload() }
             }
     }
 
     private func reload() async {
-        guard let account = selectedAccount else { return }
+        guard let account = service.activeAccount else { return }
         isLoading = true
         // "Today" uses the CME session start (5 PM CT yesterday) so it matches
         // the broker's session P&L. Other periods use a rolling day offset.

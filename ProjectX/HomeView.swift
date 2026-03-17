@@ -191,7 +191,7 @@ struct HomeView: View {
 
     private var accountCard: some View {
         card("Account", systemImage: "person.crop.rectangle", destination: .accounts) {
-            if let account = service.accounts.first {
+            if let account = service.activeAccount {
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(account.name)

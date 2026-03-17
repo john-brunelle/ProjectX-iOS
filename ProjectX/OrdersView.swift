@@ -9,7 +9,6 @@ struct OrdersView: View {
     @State private var historyOrders:   [Order]  = []
     @State private var selectedTab               = 0
     @State private var isLoading                 = false
-    @State private var selectedAccount: Account?
 
     var body: some View {
         if isEmbedded {
@@ -21,20 +20,6 @@ struct OrdersView: View {
 
     @ViewBuilder private var content: some View {
         VStack(spacing: 0) {
-                if service.accounts.count > 1 {
-                    Picker("Account", selection: $selectedAccount) {
-                        ForEach(service.accounts) { acct in
-                            Text(acct.name).tag(Optional(acct))
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .padding(.horizontal)
-                    .padding(.vertical, 6)
-                    .onChange(of: selectedAccount) { _, _ in
-                        Task { await loadAll() }
-                    }
-                }
-
                 Picker("", selection: $selectedTab) {
                     Text("Open (\(openOrders.count))").tag(0)
                     Text("History (\(historyOrders.count))").tag(1)
@@ -87,17 +72,19 @@ struct OrdersView: View {
                 }
             }
             .task {
-                selectedAccount = service.accounts.first
                 await loadAll()
                 while !Task.isCancelled {
                     try? await Task.sleep(for: .seconds(15))
                     await loadAll()
                 }
             }
+            .onChange(of: service.activeAccount) { _, _ in
+                Task { await loadAll() }
+            }
     }
 
     private func loadAll() async {
-        guard let account = selectedAccount else { return }
+        guard let account = service.activeAccount else { return }
         isLoading = true
         async let open    = service.searchOpenOrders(accountId: account.id)
         async let history = service.searchOrders(
@@ -111,7 +98,7 @@ struct OrdersView: View {
     }
 
     private func cancelOrder(_ order: Order) async {
-        guard let account = selectedAccount else { return }
+        guard let account = service.activeAccount else { return }
         let ok = await service.cancelOrder(accountId: account.id, orderId: order.id)
         if ok { await loadAll() }
     }
