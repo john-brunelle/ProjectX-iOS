@@ -67,6 +67,33 @@ extension ProjectXService {
             return nil
         }
 
+        // ── Max Daily Loss Guard ────────────────
+        let dailyLossEnabled = UserDefaults.standard.bool(forKey: "pref_enableDailyLossLimit")
+        if dailyLossEnabled {
+            let maxDailyLoss = UserDefaults.standard.object(forKey: "pref_maxDailyLoss") as? Double ?? 500.0
+            let dailyPnL = RealtimeService.shared.liveTrades
+                .filter { $0.accountId == accountId && !$0.voided && !$0.isHalfTurn }
+                .compactMap { $0.profitAndLoss }
+                .reduce(0, +)
+
+            if dailyPnL <= -maxDailyLoss {
+                let reason = "Blocked: daily loss $\(String(format: "%.2f", abs(dailyPnL))) exceeds limit $\(String(format: "%.2f", maxDailyLoss)) on account \(accountId)"
+                errorMessage = reason
+                NetworkLogger.shared.log(NetworkLogger.Entry(
+                    timestamp: Date(),
+                    source: .rest,
+                    method: "GUARD",
+                    path: "guard/maxDailyLoss",
+                    statusCode: 403,
+                    duration: 0,
+                    requestBody: "{\"accountId\":\(accountId),\"contractId\":\"\(contractId)\",\"side\":\"\(side.rawValue)\",\"size\":\(size)}",
+                    responseBody: nil,
+                    error: reason
+                ))
+                return nil
+            }
+        }
+
         let body = PlaceOrderRequest(
             accountId:         accountId,
             contractId:        contractId,
