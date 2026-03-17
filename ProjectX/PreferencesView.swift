@@ -8,9 +8,6 @@ import SwiftUI
 // ─────────────────────────────────────────────
 
 struct PreferencesView: View {
-    // MARK: - Rate Limits
-    @AppStorage("pref_maxFeedRequestsPerMinute") private var maxFeedRequestsPerMinute = 60
-    @AppStorage("pref_maxOrderRequestsPerMinute") private var maxOrderRequestsPerMinute = 30
 
     // MARK: - Risk Guards
     @AppStorage("pref_maxOpenPositions") private var maxOpenPositions = 5
@@ -33,14 +30,22 @@ struct PreferencesView: View {
             List {
                 // ── Rate Limits ──────────────────────
                 Section {
-                    Stepper("Feed Requests: \(maxFeedRequestsPerMinute)/min",
-                            value: $maxFeedRequestsPerMinute, in: 10...300, step: 10)
-                    Stepper("Order Requests: \(maxOrderRequestsPerMinute)/min",
-                            value: $maxOrderRequestsPerMinute, in: 5...120, step: 5)
+                    HStack {
+                        Text("Bars Feed")
+                        Spacer()
+                        Text("50 requests / 30 sec")
+                            .foregroundStyle(.secondary)
+                    }
+                    HStack {
+                        Text("All Other Endpoints")
+                        Spacer()
+                        Text("200 requests / 60 sec")
+                            .foregroundStyle(.secondary)
+                    }
                 } header: {
                     Text("Rate Limits")
                 } footer: {
-                    Text("Maximum API requests per minute. Lower values reduce load but may delay signals.")
+                    Text("Exceeding these limits will result in errors from the API. These limits are subject to change.")
                 }
 
                 // ── Risk Guards ──────────────────────
