@@ -19,6 +19,7 @@ struct BotDetailView: View {
     let bot: BotConfig
 
     @Query private var allAssignments: [AccountBotAssignment]
+    @Query private var allProfiles: [AccountProfile]
 
     // ── Edit state (loaded from bot on appear) ──
     @State private var name = ""
@@ -249,7 +250,7 @@ struct BotDetailView: View {
         .confirmationDialog("Start on which account?", isPresented: $showAccountPicker) {
             let assignedAccountIds = allAssignments.filter { $0.botId == bot.id }.map(\.accountId)
             ForEach(service.accounts.filter { assignedAccountIds.contains($0.id) }) { account in
-                Button(account.name) {
+                Button(displayName(for: account)) {
                     botRunner.start(bot: bot, accountId: account.id)
                 }
             }
@@ -792,7 +793,13 @@ struct BotDetailView: View {
         try? modelContext.save()
     }
 
-    // MARK: - Indicator Helpers
+    // MARK: - Helpers
+
+    private func displayName(for account: Account) -> String {
+        let profile = allProfiles.first { $0.accountId == account.id }
+        let alias = profile?.alias.trimmingCharacters(in: .whitespaces) ?? ""
+        return alias.isEmpty ? account.name : alias
+    }
 
     private func removeIndicator(at offsets: IndexSet) {
         let visible = allIndicators.filter { selectedIndicatorIDs.contains($0.id) }

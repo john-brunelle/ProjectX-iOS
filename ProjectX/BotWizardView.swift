@@ -56,6 +56,7 @@ struct BotWizardView: View {
     @State private var testBarCount: Int?
     @State private var isTestingBars = false
     @State private var previewBotId = UUID()
+    @State private var showDataCheckInfo = false
 
     var isEditing: Bool { existing != nil }
 
@@ -309,13 +310,6 @@ struct BotWizardView: View {
 
             // ── Review Summary ─────────────
             Section("Review") {
-                HStack {
-                    Spacer()
-                    BotAvatar(botId: isEditing ? existing!.id : previewBotId, size: 64)
-                        .shadow(color: .black.opacity(0.12), radius: 6, y: 3)
-                    Spacer()
-                }
-                .listRowBackground(Color.clear)
                 reviewRow("Name", botName)
                 if let contract = selectedContract {
                     reviewRow("Contract", contract.name)
@@ -325,7 +319,7 @@ struct BotWizardView: View {
                 reviewRow("Indicators", "\(selectedIndicatorIDs.count)")
             }
 
-            Section("Data Check") {
+            Section {
                 if isTestingBars {
                     ProgressView("Checking bar availability...")
                 } else if let count = testBarCount {
@@ -335,6 +329,21 @@ struct BotWizardView: View {
                     Button("Test Bar Availability") {
                         Task { await testBars() }
                     }
+                }
+            } header: {
+                HStack {
+                    Text("Data Check")
+                    Button {
+                        showDataCheckInfo.toggle()
+                    } label: {
+                        Image(systemName: "info.circle")
+                            .font(.caption)
+                    }
+                }
+            } footer: {
+                if showDataCheckInfo {
+                    Text("Verifies that historical bar data is available from the broker for your chosen contract and bar size. If 0 bars are returned, the bot won't be able to evaluate indicators.")
+                        .font(.caption2)
                 }
             }
         }

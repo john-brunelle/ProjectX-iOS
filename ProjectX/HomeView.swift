@@ -40,6 +40,7 @@ struct HomeView: View {
     @State private var showStopActions = false
     @State private var showAddBotSheet = false
     @State private var conflictHintBotId: UUID?
+    @State private var selectedBot: BotConfig?
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -135,6 +136,9 @@ struct HomeView: View {
                 BotAssignmentSheet(accountId: accountId)
             }
         }
+        .sheet(item: $selectedBot) { bot in
+            BotDetailView(bot: bot)
+        }
     }
 
     // ═══════════════════════════════════════════
@@ -157,12 +161,12 @@ struct HomeView: View {
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }
+            .contentShape(Rectangle())
+            .onTapGesture { path.append(destination) }
             content()
         }
         .padding()
         .background(.fill.tertiary, in: RoundedRectangle(cornerRadius: 12))
-        .contentShape(Rectangle())
-        .onTapGesture { path.append(destination) }
     }
 
     // ═══════════════════════════════════════════
@@ -392,12 +396,9 @@ struct HomeView: View {
     private var botsCard: some View {
         card("Bots", systemImage: "gearshape.2.fill", destination: .bots) {
             let accountBots = bots.filter { activeAccountBotIds.contains($0.id) && !$0.isArchived }
-            if accountBots.isEmpty {
-                Text("No bots for this account")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
+            if !accountBots.isEmpty {
                 VStack(spacing: 14) {
+                    Spacer().frame(height: 2)
                     ForEach(accountBots.filter(\.isActive).sorted { a, _ in botRunner.isRunning(a) }.prefix(5)) { bot in
                         let running = botRunner.isRunning(bot)
                         let state = botRunner.runStates[bot.id]
@@ -407,10 +408,16 @@ struct HomeView: View {
 
                         VStack(alignment: .leading, spacing: 4) {
                             HStack {
-                                // Pulsing dot when running
-                                Circle()
-                                    .fill(running ? .green : .gray.opacity(0.4))
-                                    .frame(width: 8, height: 8)
+                                BotAvatar(botId: bot.id, size: 24)
+                                    .overlay(alignment: .bottomTrailing) {
+                                        if running {
+                                            Circle()
+                                                .fill(.green)
+                                                .frame(width: 8, height: 8)
+                                                .background(Circle().fill(.background).padding(-1))
+                                                .offset(x: 2, y: 2)
+                                        }
+                                    }
 
                                 Text(bot.name)
                                     .font(.subheadline.weight(.semibold))
@@ -501,6 +508,8 @@ struct HomeView: View {
                                 }
                             }
                         }
+                        .contentShape(Rectangle())
+                        .onTapGesture { selectedBot = bot }
                     }
                     let activeBots = accountBots.filter(\.isActive)
                     if activeBots.count > 5 {
@@ -562,19 +571,18 @@ struct HomeView: View {
                         }
                     }
 
-                    Divider()
-
-                    Button {
-                        showAddBotSheet = true
-                    } label: {
-                        Label("Add Bot", systemImage: "plus.circle.fill")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.blue)
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.plain)
                 }
             }
+
+            Button {
+                showAddBotSheet = true
+            } label: {
+                Label("Add Bot", systemImage: "plus.circle.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.blue)
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.plain)
         }
     }
 

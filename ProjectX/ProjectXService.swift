@@ -13,9 +13,19 @@ class ProjectXService {
     private let kApiKey   = "px_apikey"
     private let kToken    = "px_token"
 
+    private let kActiveAccountId = "px_activeAccountId"
+
     var isAuthenticated = false
     var accounts: [Account] = []
-    var activeAccount: Account? = nil
+    var activeAccount: Account? = nil {
+        didSet {
+            if let id = activeAccount?.id {
+                UserDefaults.standard.set(id, forKey: kActiveAccountId)
+            } else {
+                UserDefaults.standard.removeObject(forKey: kActiveAccountId)
+            }
+        }
+    }
     var errorMessage: String?
 
     var savedUsername: String? { KeychainHelper.load(for: kUsername) }
@@ -76,7 +86,8 @@ class ProjectXService {
         }
         accounts = response.accounts ?? []
         if activeAccount == nil {
-            activeAccount = accounts.first
+            let savedId = UserDefaults.standard.integer(forKey: kActiveAccountId)
+            activeAccount = accounts.first(where: { $0.id == savedId }) ?? accounts.first
         }
         errorMessage = nil
     }
