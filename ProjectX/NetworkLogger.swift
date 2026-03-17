@@ -39,6 +39,7 @@ class NetworkLogger {
         case marketDepth  = "Market Depth"
         case connection   = "Connection"
         case lifecycle    = "Lifecycle"
+        case guards       = "Guards"
 
         var id: String { rawValue }
 
@@ -55,6 +56,7 @@ class NetworkLogger {
             case .marketDepth: return entry.method == "GatewayDepth"
             case .connection:  return entry.method.hasPrefix("connect") || entry.method.hasPrefix("disconnect") || entry.method.hasPrefix("switch") || entry.method.hasPrefix("connectionDid") || entry.method.hasPrefix("connectionWill")
             case .lifecycle:   return entry.path == "lifecycle"
+            case .guards:      return entry.path.hasPrefix("guard/")
             }
         }
     }

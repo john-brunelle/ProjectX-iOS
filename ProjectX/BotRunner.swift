@@ -487,11 +487,15 @@ class BotRunner {
                        message: "Placed \(side.label) order #\(orderId) (qty: \(bot.quantity))")
         } else {
             let errorMsg = service.errorMessage ?? "unknown error"
-            logToState(key: key, type: .error,
-                       message: "Order placement failed: \(errorMsg)")
-            logToState(key: key, type: .info,
-                       message: "Stopping bot due to order error")
-            stopInstance(key: key, bot: bot)
+            if errorMsg.hasPrefix("Blocked:") {
+                logToState(key: key, type: .error, message: errorMsg)
+            } else {
+                logToState(key: key, type: .error,
+                           message: "Order placement failed: \(errorMsg)")
+                logToState(key: key, type: .info,
+                           message: "Stopping bot due to order error")
+                stopInstance(key: key, bot: bot)
+            }
         }
     }
 

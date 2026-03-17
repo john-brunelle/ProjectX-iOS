@@ -43,6 +43,30 @@ extension ProjectXService {
         takeProfit: BracketOrder? = nil
     ) async -> Int? {
         guard let token = sessionToken else { return nil }
+
+        // ── Max Open Positions Guard ──────────────
+        let maxPositions = UserDefaults.standard.object(forKey: "pref_maxOpenPositions") as? Int ?? 5
+        let currentPositionCount = RealtimeService.shared.livePositions
+            .filter { $0.accountId == accountId }
+            .count
+
+        if currentPositionCount >= maxPositions {
+            let reason = "Blocked: \(currentPositionCount) open position\(currentPositionCount == 1 ? "" : "s") (limit: \(maxPositions)) on account \(accountId)"
+            errorMessage = reason
+            NetworkLogger.shared.log(NetworkLogger.Entry(
+                timestamp: Date(),
+                source: .rest,
+                method: "GUARD",
+                path: "guard/maxOpenPositions",
+                statusCode: 403,
+                duration: 0,
+                requestBody: "{\"accountId\":\(accountId),\"contractId\":\"\(contractId)\",\"side\":\"\(side.rawValue)\",\"size\":\(size)}",
+                responseBody: nil,
+                error: reason
+            ))
+            return nil
+        }
+
         let body = PlaceOrderRequest(
             accountId:         accountId,
             contractId:        contractId,
