@@ -11,8 +11,13 @@ struct ProjectXApp: App {
 
     init() {
         UserDefaults.standard.register(defaults: [
-            "pref_autoRestoreBots": true
+            "pref_autoRestoreBots": true,
+            "pref_notifyOnStopLoss": false,
+            "pref_notifyOnTakeProfit": false,
+            "pref_notifyOnOrderFill": false,
+            "pref_notifyOnBotError": false
         ])
+        _ = NotificationService.shared
     }
 
     var body: some Scene {

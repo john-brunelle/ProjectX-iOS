@@ -867,13 +867,7 @@ struct BotDetailView: View {
 
     @ViewBuilder
     private var activityLogSection: some View {
-        let allLogs: [BotLogEntry] = {
-            var logs: [BotLogEntry] = []
-            for (key, state) in botRunner.runStates where key.botId == bot.id {
-                logs.append(contentsOf: state.log)
-            }
-            return logs.sorted { $0.timestamp > $1.timestamp }
-        }()
+        let allLogs: [BotLogEntry] = botRunner.logsForBot(botId: bot.id)
 
         if !allLogs.isEmpty {
             Section {

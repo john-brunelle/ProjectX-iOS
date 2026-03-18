@@ -105,6 +105,20 @@ class NetworkLogger {
         }
     }
 
+    // MARK: - Rate Monitoring
+
+    /// Number of bars feed requests in the last 30 seconds (limit: 50).
+    var barsFeedRequestsPer30s: Int {
+        let cutoff = Date().addingTimeInterval(-30)
+        return entries.count { $0.timestamp >= cutoff && $0.path.contains("/api/History/retrieveBars") }
+    }
+
+    /// Number of non-bars REST requests in the last 60 seconds (limit: 200).
+    var otherRequestsPer60s: Int {
+        let cutoff = Date().addingTimeInterval(-60)
+        return entries.count { $0.timestamp >= cutoff && $0.source == .rest && !$0.path.contains("/api/History/retrieveBars") }
+    }
+
     // MARK: - State
 
     private(set) var entries: [Entry] = []

@@ -240,6 +240,13 @@ class RealtimeService {
                 } else {
                     self.liveOrders.insert(order, at: 0)
                 }
+                // Notify on order fill (status 2 = Filled)
+                if order.status == 2 {
+                    NotificationService.shared.notifyOrderFilled(
+                        orderId: order.id, side: order.sideLabel,
+                        size: order.size, contractId: order.contractId)
+                }
+
                 NetworkLogger.shared.log(NetworkLogger.Entry(
                     timestamp: Date(), source: .signalR, method: "GatewayUserOrder",
                     path: "UserHub", statusCode: nil, duration: nil,

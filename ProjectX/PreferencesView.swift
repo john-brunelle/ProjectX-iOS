@@ -21,9 +21,10 @@ struct PreferencesView: View {
     @AppStorage("pref_autoRestoreBots") private var autoRestoreBots = true
 
     // MARK: - Notifications
-    @AppStorage("pref_notifyOnSignal") private var notifyOnSignal = true
-    @AppStorage("pref_notifyOnOrderFill") private var notifyOnOrderFill = true
-    @AppStorage("pref_notifyOnBotError") private var notifyOnBotError = true
+    @AppStorage("pref_notifyOnStopLoss") private var notifyOnStopLoss = false
+    @AppStorage("pref_notifyOnTakeProfit") private var notifyOnTakeProfit = false
+    @AppStorage("pref_notifyOnOrderFill") private var notifyOnOrderFill = false
+    @AppStorage("pref_notifyOnBotError") private var notifyOnBotError = false
 
     var body: some View {
         NavigationStack {
@@ -86,14 +87,19 @@ struct PreferencesView: View {
 
                 // ── Notifications ────────────────────
                 Section {
-                    Toggle("Signal Alerts", isOn: $notifyOnSignal)
+                    Toggle("Stop Loss Hit", isOn: $notifyOnStopLoss)
+                    Toggle("Take Profit Hit", isOn: $notifyOnTakeProfit)
                     Toggle("Order Fills", isOn: $notifyOnOrderFill)
                     Toggle("Bot Errors", isOn: $notifyOnBotError)
                 } header: {
                     Text("Notifications")
                 } footer: {
-                    Text("Control which events trigger notifications.")
+                    Text("Control which events trigger local notifications.")
                 }
+                .onChange(of: notifyOnStopLoss) { _, new in if new { NotificationService.shared.requestPermissionIfNeeded() } }
+                .onChange(of: notifyOnTakeProfit) { _, new in if new { NotificationService.shared.requestPermissionIfNeeded() } }
+                .onChange(of: notifyOnOrderFill) { _, new in if new { NotificationService.shared.requestPermissionIfNeeded() } }
+                .onChange(of: notifyOnBotError) { _, new in if new { NotificationService.shared.requestPermissionIfNeeded() } }
             }
             .navigationTitle("Preferences")
         }

@@ -461,11 +461,12 @@ class BotRunner {
         }
 
         // Build bracket orders
+        // API convention: stop loss ticks are always negative, take profit always positive
         let stopLoss = bot.stopLossTicks.map {
-            BracketOrder(ticks: $0, type: OrderType.stop.rawValue)
+            BracketOrder(ticks: -abs($0), type: OrderType.stop.rawValue)
         }
         let takeProfit = bot.takeProfitTicks.map {
-            BracketOrder(ticks: $0, type: OrderType.limit.rawValue)
+            BracketOrder(ticks: abs($0), type: OrderType.limit.rawValue)
         }
 
         // Place order
@@ -507,6 +508,20 @@ class BotRunner {
         let matched = realtime.liveTrades.filter {
             orderIds.contains($0.orderId) && !$0.voided && $0.profitAndLoss != nil
         }
+        // Fire SL/TP notifications for newly matched trades
+        let botName = runningBotInfo[key]?.name ?? "Bot"
+        let contractId = runningBotInfo[key]?.contractId ?? ""
+        for trade in matched {
+            guard let tradePnL = trade.profitAndLoss else { continue }
+            if tradePnL < 0 {
+                NotificationService.shared.notifyStopLossHit(
+                    tradeId: trade.id, botName: botName, pnl: tradePnL, contractId: contractId)
+            } else if tradePnL > 0 {
+                NotificationService.shared.notifyTakeProfitHit(
+                    tradeId: trade.id, botName: botName, pnl: tradePnL, contractId: contractId)
+            }
+        }
+
         let pnl = matched.compactMap { $0.profitAndLoss }.reduce(0, +)
         let count = matched.count
         updateState(key: key) { state in
@@ -577,6 +592,25 @@ class BotRunner {
         Array(all.dropFirst(200)).forEach { ctx.delete($0) }
     }
 
+    /// Returns logs for a bot: in-memory if running, persisted (SwiftData) otherwise.
+    func logsForBot(botId: UUID) -> [BotLogEntry] {
+        // Gather in-memory logs from all running instances of this bot
+        var logs: [BotLogEntry] = []
+        for (key, state) in runStates where key.botId == botId {
+            logs.append(contentsOf: state.log)
+        }
+        // If no in-memory logs, fall back to persisted logs across all accounts
+        if logs.isEmpty {
+            guard let ctx = modelContext else { return [] }
+            let descriptor = FetchDescriptor<BotLogEntryRecord>(
+                predicate: #Predicate { $0.botId == botId },
+                sortBy:    [SortDescriptor(\.timestamp, order: .reverse)]
+            )
+            logs = ((try? ctx.fetch(descriptor)) ?? []).map { $0.asLogEntry() }
+        }
+        return logs.sorted { $0.timestamp > $1.timestamp }
+    }
+
     private func loadPersistedLog(for key: BotRunKey) -> [BotLogEntry] {
         guard let ctx = modelContext else { return [] }
         let botId = key.botId
@@ -603,6 +637,11 @@ class BotRunner {
         var state = runStates[key] ?? BotRunState()
         log(key: key, type: type, message: message, state: &state)
         runStates[key] = state
+
+        if type == .error {
+            let botName = runningBotInfo[key]?.name ?? "Bot"
+            NotificationService.shared.notifyBotError(botName: botName, message: message)
+        }
     }
 
     private func updateState(key: BotRunKey, update: (inout BotRunState) -> Void) {

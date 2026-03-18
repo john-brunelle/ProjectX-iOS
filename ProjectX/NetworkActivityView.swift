@@ -26,6 +26,7 @@ struct NetworkActivityView: View {
         NavigationStack {
             VStack(spacing: 0) {
                 filterBar
+                rateGauges
                 entryList
             }
             .navigationTitle("Network")
@@ -93,6 +94,57 @@ struct NetworkActivityView: View {
             Divider()
         }
         .padding(.top, 8)
+    }
+
+    // MARK: - Rate Gauges
+
+    @ViewBuilder
+    private var rateGauges: some View {
+        let barsCount = logger.barsFeedRequestsPer30s
+        let barsLimit = 50
+        let otherCount = logger.otherRequestsPer60s
+        let otherLimit = 200
+
+        HStack(spacing: 12) {
+            rateGauge(label: "Bars Feed", window: "30s", count: barsCount, limit: barsLimit)
+            rateGauge(label: "Other", window: "60s", count: otherCount, limit: otherLimit)
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 8)
+
+        Divider()
+    }
+
+    @ViewBuilder
+    private func rateGauge(label: String, window: String, count: Int, limit: Int) -> some View {
+        let ratio = Double(count) / Double(limit)
+        let color: Color = ratio >= 0.9 ? .red : ratio >= 0.7 ? .orange : .green
+
+        VStack(spacing: 4) {
+            HStack(spacing: 4) {
+                Circle()
+                    .fill(color)
+                    .frame(width: 6, height: 6)
+                Text(label)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            Text("\(count) / \(limit)")
+                .font(.system(.caption, design: .monospaced, weight: .medium))
+                .foregroundStyle(color)
+
+            ProgressView(value: min(Double(count), Double(limit)), total: Double(limit))
+                .tint(color)
+
+            Text(window)
+                .font(.system(size: 9))
+                .foregroundStyle(.tertiary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 6)
+        .padding(.horizontal, 8)
+        .background(color.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
     }
 
     // MARK: - Entry List
