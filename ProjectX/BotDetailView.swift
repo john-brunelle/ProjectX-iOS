@@ -328,13 +328,19 @@ struct BotDetailView: View {
                             .font(.caption)
                         }
                     }
-                    if state.sessionPnL != 0 || state.sessionTradeCount > 0 {
+                    if state.sessionPnL != 0 || state.sessionTradeCount > 0 || state.unrealizedPnL != 0 {
+                        let totalSession = state.sessionPnL + state.unrealizedPnL
                         HStack {
                             Text("Session P&L").foregroundStyle(.secondary)
                             Spacer()
-                            Text(formatPnL(state.sessionPnL))
+                            Text(formatPnL(totalSession))
                                 .fontWeight(.semibold)
-                                .foregroundStyle(state.sessionPnL >= 0 ? .green : .red)
+                                .foregroundStyle(totalSession >= 0 ? .green : .red)
+                            if state.unrealizedPnL != 0 {
+                                Text("(\(formatPnL(state.unrealizedPnL)) open)")
+                                    .font(.caption)
+                                    .foregroundStyle(.orange)
+                            }
                             Text("(\(state.sessionTradeCount))")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
@@ -550,25 +556,42 @@ struct BotDetailView: View {
     private var performanceSection: some View {
         Section("Performance") {
             let aggregatedPnL = runningAccountIds.reduce(0.0) { sum, acctId in
-                sum + (botRunner.runState(for: bot, accountId: acctId)?.sessionPnL ?? 0)
+                let state = botRunner.runState(for: bot, accountId: acctId)
+                return sum + (state?.sessionPnL ?? 0) + (state?.unrealizedPnL ?? 0)
             }
             let aggregatedTrades = runningAccountIds.reduce(0) { sum, acctId in
                 sum + (botRunner.runState(for: bot, accountId: acctId)?.sessionTradeCount ?? 0)
             }
-            HStack(spacing: 0) {
-                pnlTile(
-                    label: isRunning ? "Session P&L" : "Last Session",
-                    value: aggregatedPnL,
-                    trades: aggregatedTrades,
-                    showNA: !isRunning
-                )
-                Divider()
-                pnlTile(
-                    label: "All Time",
-                    value: bot.lifetimePnL,
-                    trades: bot.lifetimeTradeCount,
-                    showNA: false
-                )
+            let aggregatedUnrealized = runningAccountIds.reduce(0.0) { sum, acctId in
+                sum + (botRunner.runState(for: bot, accountId: acctId)?.unrealizedPnL ?? 0)
+            }
+            VStack(spacing: 8) {
+                HStack(spacing: 0) {
+                    pnlTile(
+                        label: isRunning ? "Session P&L" : "Last Session",
+                        value: aggregatedPnL,
+                        trades: aggregatedTrades,
+                        showNA: !isRunning
+                    )
+                    Divider()
+                    pnlTile(
+                        label: "All Time",
+                        value: bot.lifetimePnL,
+                        trades: bot.lifetimeTradeCount,
+                        showNA: false
+                    )
+                }
+                if isRunning && aggregatedUnrealized != 0 {
+                    HStack {
+                        Text("Open P&L")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Text(formatPnL(aggregatedUnrealized))
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.orange)
+                    }
+                }
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 4)
@@ -1148,6 +1171,7 @@ struct BotLogRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(entry.message)
                     .font(.caption)
+                    .textSelection(.enabled)
                 Text(entry.timestamp, style: .time)
                     .font(.caption2)
                     .foregroundStyle(.tertiary)

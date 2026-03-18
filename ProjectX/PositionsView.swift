@@ -89,7 +89,7 @@ struct PositionsView: View {
             }
             // Close all confirmation
             .confirmationDialog(
-                "Close entire position in \(positionToClose?.contractId ?? "")?",
+                "Close entire position in \(service.contractName(for: positionToClose?.contractId ?? ""))?",
                 isPresented: Binding(
                     get: { positionToClose != nil && !showPartialClose },
                     set: { if !$0 { positionToClose = nil } }
@@ -158,6 +158,7 @@ struct PositionsView: View {
 // ── Position Row ──────────────────────────────
 
 struct PositionRow: View {
+    @Environment(ProjectXService.self) var service
     let position: Position
     var onClose: (() -> Void)? = nil
     var onPartialClose: (() -> Void)? = nil
@@ -173,7 +174,7 @@ struct PositionRow: View {
                     .background(typeColor.opacity(0.15))
                     .foregroundStyle(typeColor)
                     .clipShape(Capsule())
-                Text(position.contractId).font(.headline)
+                Text(service.contractName(for: position.contractId)).font(.headline)
                 Spacer()
                 Text("Qty: \(position.size)")
                     .font(.subheadline).fontWeight(.medium)
@@ -238,6 +239,7 @@ struct PositionRow: View {
 // ── Partial Close Sheet ───────────────────────
 
 struct PartialCloseView: View {
+    @Environment(ProjectXService.self) var service
     let position:  Position
     @Binding var closeSize: Int
     let onConfirm: () -> Void
@@ -248,7 +250,7 @@ struct PartialCloseView: View {
             Form {
                 Section("Position") {
                     HStack {
-                        Text(position.contractId).font(.headline)
+                        Text(service.contractName(for: position.contractId)).font(.headline)
                         Spacer()
                         Text(position.typeLabel)
                             .foregroundStyle(position.isLong ? .green : .red)

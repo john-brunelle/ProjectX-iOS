@@ -41,6 +41,7 @@ class RealtimeService {
     var liveOrders:     [Order]    = []
     var livePositions:  [Position] = []
     var liveTrades:     [Trade]    = []
+    var initialDataLoaded = false
 
     // ── Observable state — Market Hub ─────────
     var currentQuote:   Quote?     = nil
@@ -125,6 +126,7 @@ class RealtimeService {
         liveOrders    = []
         livePositions = []
         liveTrades    = []
+        initialDataLoaded = false
         connectUserHub(accountId: accountId)
     }
 
@@ -151,6 +153,7 @@ class RealtimeService {
         liveOrders    = fetchedOrders
         livePositions = fetchedPositions
         liveTrades    = Array(fetchedTrades.prefix(200))
+        initialDataLoaded = true
 
     }
 
@@ -172,6 +175,15 @@ class RealtimeService {
         liveOrders    = orders
         livePositions = positions
         liveTrades    = trades
+    }
+
+    /// Called by BotRunner on each poll to keep data fresh via REST,
+    /// independent of SignalR connection status.
+    func updateFromREST(positions: [Position], orders: [Order], trades: [Trade]) {
+        livePositions = positions
+        liveOrders    = orders
+        liveTrades    = Array(trades.prefix(200))
+        if !initialDataLoaded { initialDataLoaded = true }
     }
 
     private func unsubscribeUserHub() {

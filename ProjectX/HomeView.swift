@@ -41,7 +41,8 @@ struct HomeView: View {
     @State private var showGlobalNuclearConfirmation = false
     @State private var showStopActions = false
     @State private var showAddBotSheet = false
-    @State private var showRemoveBotSheet = false
+    @State private var editingBots = false
+    @State private var draggingBotId: UUID?
     @State private var conflictHintBotId: UUID?
     @State private var selectedBot: BotConfig?
 
@@ -187,11 +188,6 @@ struct HomeView: View {
                 BotAssignmentSheet(accountId: accountId)
             }
         }
-        .sheet(isPresented: $showRemoveBotSheet) {
-            if let accountId = service.activeAccount?.id {
-                BotRemovalSheet(accountId: accountId)
-            }
-        }
         .sheet(item: $selectedBot) { bot in
             BotDetailView(bot: bot)
         }
@@ -219,6 +215,26 @@ struct HomeView: View {
             }
             .contentShape(Rectangle())
             .onTapGesture { path.append(destination) }
+            content()
+        }
+        .padding()
+        .background(.fill.tertiary, in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    @ViewBuilder
+    private func card<Content: View, Trailing: View>(
+        _ title: String,
+        systemImage: String,
+        @ViewBuilder trailing: () -> Trailing,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label(title, systemImage: systemImage)
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                trailing()
+            }
             content()
         }
         .padding()
@@ -338,7 +354,7 @@ struct HomeView: View {
                                     (pos.isLong ? Color.green : Color.red).opacity(0.15),
                                     in: Capsule()
                                 )
-                            Text(pos.contractId)
+                            Text(service.contractName(for: pos.contractId))
                                 .font(.caption)
                                 .lineLimit(1)
                             Spacer()
@@ -420,7 +436,7 @@ struct HomeView: View {
                                 .foregroundStyle(order.side == 0 ? .green : .red)
                             Text(order.typeLabel)
                                 .font(.caption)
-                            Text(order.contractId)
+                            Text(service.contractName(for: order.contractId))
                                 .font(.caption)
                                 .lineLimit(1)
                             Spacer()
@@ -460,12 +476,36 @@ struct HomeView: View {
     }
 
     private var botsCard: some View {
-        card("Bots", systemImage: "gearshape.2.fill", destination: .bots) {
+        card("Bots", systemImage: "gearshape.2.fill") {
+            HStack(spacing: 16) {
+                Button {
+                    withAnimation { editingBots.toggle() }
+                } label: {
+                    Image(systemName: editingBots ? "checkmark.circle.fill" : "minus.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(editingBots ? .green : .red)
+                        .frame(minWidth: 32, minHeight: 32)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.borderless)
+                .opacity(bots.contains(where: { activeAccountBotIds.contains($0.id) && !$0.isArchived }) ? 1 : 0.3)
+
+                Button {
+                    showAddBotSheet = true
+                } label: {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(.blue)
+                        .frame(minWidth: 32, minHeight: 32)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.borderless)
+            }
+        } content: {
             let accountBots = bots.filter { activeAccountBotIds.contains($0.id) && !$0.isArchived }
             if !accountBots.isEmpty {
-                VStack(spacing: 0) {
-                    List {
-                        ForEach(sortedAccountBots.prefix(5)) { bot in
+                VStack(spacing: 8) {
+                    ForEach(sortedAccountBots.prefix(5)) { bot in
                         let activeAccountId = service.activeAccount?.id ?? 0
                         let running = botRunner.isRunning(bot, accountId: activeAccountId)
                         let state = botRunner.runState(for: bot, accountId: activeAccountId)
@@ -537,13 +577,19 @@ struct HomeView: View {
                             HStack(spacing: 10) {
                                 // Session (only while running)
                                 if running, let state {
+                                    let totalSession = state.sessionPnL + state.unrealizedPnL
                                     HStack(spacing: 3) {
                                         Text("Session:")
                                             .font(.caption)
                                             .foregroundStyle(.secondary)
-                                        Text(formatPnL(state.sessionPnL))
+                                        Text(formatPnL(totalSession))
                                             .font(.caption.weight(.semibold))
-                                            .foregroundStyle(state.sessionPnL >= 0 ? .green : .red)
+                                            .foregroundStyle(totalSession >= 0 ? .green : .red)
+                                        if state.unrealizedPnL != 0 {
+                                            Text("(\(formatPnL(state.unrealizedPnL)) open)")
+                                                .font(.caption2)
+                                                .foregroundStyle(.orange)
+                                        }
                                         Text("(\(state.sessionTradeCount))")
                                             .font(.caption2)
                                             .foregroundStyle(.tertiary)
@@ -590,17 +636,38 @@ struct HomeView: View {
                         }
                         .padding(10)
                         .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: 8))
+                        .overlay(alignment: .topLeading) {
+                            if editingBots {
+                                Button {
+                                    withAnimation { unassignBot(bot) }
+                                } label: {
+                                    Image(systemName: "minus.circle.fill")
+                                        .foregroundStyle(.white, .red)
+                                        .font(.body)
+                                }
+                                .buttonStyle(.plain)
+                                .offset(x: -8, y: -8)
+                            }
+                        }
                         .contentShape(Rectangle())
-                        .onTapGesture { selectedBot = bot }
-                        .listRowBackground(Color.clear)
-                        .listRowSeparator(.hidden)
-                        .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
+                        .onTapGesture { if !editingBots { selectedBot = bot } }
+                        .opacity(draggingBotId == bot.id ? 0.5 : 1)
+                        .draggable(bot.id.uuidString) {
+                            // Drag preview
+                            Text(bot.name)
+                                .padding(8)
+                                .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: 8))
+                        }
+                        .dropDestination(for: String.self) { items, _ in
+                            guard let draggedIdString = items.first,
+                                  let draggedId = UUID(uuidString: draggedIdString),
+                                  draggedId != bot.id else { return false }
+                            reorderBot(draggedId: draggedId, targetId: bot.id)
+                            return true
+                        } isTargeted: { targeted in
+                            // Optional: could highlight drop target
+                        }
                     }
-                    .onMove(perform: moveBots)
-                    }
-                    .listStyle(.plain)
-                    .frame(minHeight: CGFloat(min(sortedAccountBots.count, 5)) * 100)
-                    .scrollDisabled(true)
 
                     let activeBots = accountBots.filter(\.isActive)
                     if activeBots.count > 5 {
@@ -671,28 +738,6 @@ struct HomeView: View {
                 }
             }
 
-            HStack {
-                Button {
-                    showAddBotSheet = true
-                } label: {
-                    Label("Add Bot", systemImage: "plus.circle.fill")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.blue)
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.plain)
-
-                Button {
-                    showRemoveBotSheet = true
-                } label: {
-                    Label("Remove Bot", systemImage: "minus.circle.fill")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.red)
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.plain)
-                .disabled(bots.filter { activeAccountBotIds.contains($0.id) && !$0.isArchived }.isEmpty)
-            }
         }
     }
 
@@ -767,6 +812,22 @@ struct HomeView: View {
                 if let assignment = allAssignments.first(where: { $0.botId == allSorted[i].id && $0.accountId == accountId }) {
                     assignment.sortOrder = i
                 }
+            }
+        }
+        try? modelContext.save()
+    }
+
+    private func reorderBot(draggedId: UUID, targetId: UUID) {
+        let accountId = service.activeAccount?.id ?? 0
+        var ordered = sortedAccountBots.prefix(5).map(\.id)
+        guard let fromIndex = ordered.firstIndex(of: draggedId),
+              let toIndex = ordered.firstIndex(of: targetId) else { return }
+        ordered.remove(at: fromIndex)
+        ordered.insert(draggedId, at: toIndex)
+
+        for (index, botId) in ordered.enumerated() {
+            if let assignment = allAssignments.first(where: { $0.botId == botId && $0.accountId == accountId }) {
+                assignment.sortOrder = index
             }
         }
         try? modelContext.save()

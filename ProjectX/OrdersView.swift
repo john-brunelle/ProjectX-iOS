@@ -105,6 +105,7 @@ struct OrdersView: View {
 }
 
 struct OrderRow: View {
+    @Environment(ProjectXService.self) var service
     let order: Order
     let showCancel: Bool
     let onCancel: () -> Void
@@ -120,7 +121,7 @@ struct OrderRow: View {
                     .background(sideColor.opacity(0.15))
                     .foregroundStyle(sideColor)
                     .clipShape(Capsule())
-                Text(order.contractId).font(.headline)
+                Text(service.contractName(for: order.contractId)).font(.headline)
                 Spacer()
                 Text(order.statusLabel).font(.caption).foregroundStyle(.secondary)
             }

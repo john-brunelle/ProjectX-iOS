@@ -71,6 +71,10 @@ struct DashboardView: View {
             if let account = service.activeAccount {
                 realtime.connectUserHub(accountId: account.id)
             }
+            // Seed contract name cache from bots (they store contractName)
+            for bot in allBots {
+                service.contractNameCache[bot.contractId] = bot.contractName
+            }
             // Restart any bots that were running before a cold start/kill
             botRunner.restoreRunningBots(allBots)
         }

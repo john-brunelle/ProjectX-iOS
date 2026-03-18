@@ -26,7 +26,8 @@ extension ProjectXService {
             endTime: Date(),
             unit: unit,
             unitNumber: bot.barUnitNumber,
-            limit: limit
+            limit: limit,
+            includePartialBar: true
         )
     }
 

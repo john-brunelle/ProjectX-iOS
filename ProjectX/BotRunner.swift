@@ -69,7 +69,9 @@ struct BotRunState {
 
     // P&L tracking — matched via orderId against liveTrades
     var placedOrderIds: Set<Int> = []
-    var sessionPnL: Double = 0
+    var customTags: Set<String> = []      // tags from parent orders to match bracket children
+    var sessionPnL: Double = 0            // realized P&L from closed trades
+    var unrealizedPnL: Double = 0         // unrealized P&L from open position
     var sessionTradeCount: Int = 0
 }
 
@@ -107,6 +109,10 @@ class BotRunner {
         let name: String
     }
     private var runningBotInfo: [BotRunKey: RunningBotInfo] = [:]
+
+    /// Cached tick size/value per contractId for unrealized P&L calculation.
+    struct TickInfo { let tickSize: Double; let tickValue: Double }
+    private var contractTickInfo: [String: TickInfo] = [:]
 
     /// Injected by DashboardView before any restore/start calls.
     var modelContext: ModelContext?
@@ -148,6 +154,16 @@ class BotRunner {
 
         // Track contract info for conflict detection
         runningBotInfo[key] = RunningBotInfo(contractId: bot.contractId, name: bot.name)
+
+        // Fetch tick info for unrealized P&L (if not already cached)
+        if contractTickInfo[bot.contractId] == nil {
+            Task {
+                if let contract = await service.contractById(bot.contractId) {
+                    contractTickInfo[bot.contractId] = TickInfo(
+                        tickSize: contract.tickSize, tickValue: contract.tickValue)
+                }
+            }
+        }
 
         var state = BotRunState()
         log(key: key, type: .info, message: "Bot started on account \(accountId)", state: &state)
@@ -353,6 +369,16 @@ class BotRunner {
 
         runningBotInfo[key] = RunningBotInfo(contractId: bot.contractId, name: bot.name)
 
+        // Fetch tick info for unrealized P&L (if not already cached)
+        if contractTickInfo[bot.contractId] == nil {
+            Task {
+                if let contract = await service.contractById(bot.contractId) {
+                    contractTickInfo[bot.contractId] = TickInfo(
+                        tickSize: contract.tickSize, tickValue: contract.tickValue)
+                }
+            }
+        }
+
         // Reload the persisted log so history survives cold starts
         var state = BotRunState()
         state.log = loadPersistedLog(for: key)
@@ -393,7 +419,28 @@ class BotRunner {
     private func pollOnce(bot: BotConfig, accountId: Int) async {
         let key = BotRunKey(botId: bot.id, accountId: accountId)
 
-        // Fetch bars
+        // Refresh positions, orders, and trades via REST on every poll.
+        // This ensures accurate data even when SignalR is disconnected.
+        async let freshPositions = service.searchOpenPositions(accountId: accountId)
+        async let freshOrders    = service.searchOpenOrders(accountId: accountId)
+        async let freshTrades    = service.searchTrades(
+            accountId: accountId, startTimestamp: RealtimeService.sessionStart())
+
+        let (positions, orders, trades) = await (freshPositions, freshOrders, freshTrades)
+        realtime.updateFromREST(positions: positions, orders: orders, trades: trades)
+
+        // Debug: log what the REST API returned for positions on this contract
+        let botPositions = positions.filter { $0.contractId == bot.contractId }
+        for p in botPositions {
+            logToState(key: key, type: .info,
+                       message: "REST pos: id=\(p.id) \(p.isLong ? "LONG" : "SHORT") avg=\(p.averagePrice) size=\(p.size)")
+        }
+        if botPositions.isEmpty {
+            logToState(key: key, type: .info, message: "REST: no open positions on \(bot.contractId)")
+        }
+
+        // Fetch bars — use a shorter window to ensure we get the most recent bars.
+        // For indicators we need enough history, but the last bar must be current.
         let bars = await service.retrieveBarsForBot(bot, daysBack: 7, limit: 500)
 
         guard !bars.isEmpty else {
@@ -416,6 +463,21 @@ class BotRunner {
             state.lastSignal = signal
         }
 
+        // Fetch current price via 1-second bars for near real-time unrealized P&L
+        let now = Date()
+        let priceBars = await service.retrieveBars(
+            contractId: bot.contractId,
+            live: false,
+            startTime: now.addingTimeInterval(-10),
+            endTime: now,
+            unit: .second,
+            unitNumber: 1,
+            limit: 10,
+            includePartialBar: true
+        )
+        let lastPrice = priceBars.last?.c ?? bars.last?.c ?? 0
+        updateSessionPnL(key: key, bot: bot, lastPrice: lastPrice)
+
         switch signal {
         case .buy:
             logToState(key: key, type: .signal, message: "Signal: BUY")
@@ -436,9 +498,6 @@ class BotRunner {
 
         // Handle non-neutral signal
         await handleSignal(signal, bot: bot, accountId: accountId)
-
-        // Refresh session P&L from matched live trades
-        updateSessionPnL(key: key)
     }
 
     // MARK: - Signal → Order
@@ -446,6 +505,13 @@ class BotRunner {
     private func handleSignal(_ signal: Signal, bot: BotConfig, accountId: Int) async {
         let key = BotRunKey(botId: bot.id, accountId: accountId)
         let side: OrderSide = signal == .buy ? .bid : .ask
+
+        // Wait for initial position/order data before placing any orders
+        if !realtime.initialDataLoaded {
+            logToState(key: key, type: .info,
+                       message: "Waiting for position data to load, skipping \(signal == .buy ? "buy" : "sell") signal")
+            return
+        }
 
         // Check for existing position
         let existingPosition = realtime.livePositions.first {
@@ -461,22 +527,25 @@ class BotRunner {
         }
 
         // Build bracket orders
-        // API convention: stop loss ticks are always negative, take profit always positive
+        // Longs:  stop loss negative (price drops), take profit positive (price rises)
+        // Shorts: stop loss positive (price rises), take profit negative (price drops)
+        let isLong = signal == .buy
         let stopLoss = bot.stopLossTicks.map {
-            BracketOrder(ticks: -abs($0), type: OrderType.stop.rawValue)
+            BracketOrder(ticks: isLong ? -abs($0) : abs($0), type: OrderType.stop.rawValue)
         }
         let takeProfit = bot.takeProfitTicks.map {
-            BracketOrder(ticks: abs($0), type: OrderType.limit.rawValue)
+            BracketOrder(ticks: isLong ? abs($0) : -abs($0), type: OrderType.limit.rawValue)
         }
 
         // Place order
+        let tag = "bot-\(bot.id.uuidString.prefix(8))-\(UUID().uuidString.prefix(8))"
         let orderId = await service.placeOrder(
             accountId: accountId,
             contractId: bot.contractId,
             type: .market,
             side: side,
             size: bot.quantity,
-            customTag: "bot-\(bot.id.uuidString.prefix(8))-\(UUID().uuidString.prefix(8))",
+            customTag: tag,
             stopLoss: stopLoss,
             takeProfit: takeProfit
         )
@@ -484,6 +553,7 @@ class BotRunner {
         if let orderId {
             updateState(key: key) { state in
                 state.placedOrderIds.insert(orderId)
+                state.customTags.insert(tag)
             }
             logToState(key: key, type: .order,
                        message: "Placed \(side.label) order #\(orderId) (qty: \(bot.quantity))")
@@ -503,8 +573,66 @@ class BotRunner {
 
     // MARK: - Session P&L
 
-    private func updateSessionPnL(key: BotRunKey) {
-        guard let orderIds = runStates[key]?.placedOrderIds, !orderIds.isEmpty else { return }
+    private func updateSessionPnL(key: BotRunKey, bot: BotConfig, lastPrice: Double) {
+        // Calculate unrealized P&L from open position (even before any trades)
+        if let position = realtime.livePositions.first(where: {
+            $0.accountId == key.accountId && $0.contractId == bot.contractId
+        }) {
+            let priceDiff = lastPrice - position.averagePrice
+            let direction: Double = position.isLong ? 1 : -1
+            // Convert price diff to dollar P&L: (priceDiff / tickSize) * tickValue
+            // position.size is NOT multiplied — each contract already represents full notional
+            let tickInfo = contractTickInfo[bot.contractId]
+            let tickSize = tickInfo?.tickSize ?? 0.25
+            let tickValue = tickInfo?.tickValue ?? 12.50
+            let ticks = priceDiff / tickSize
+            let unrealized = ticks * tickValue * direction
+            logToState(key: key, type: .info,
+                       message: "Unrealized: posId=\(position.id) \(position.isLong ? "LONG" : "SHORT") last=\(lastPrice) avg=\(position.averagePrice) diff=\(String(format: "%.2f", priceDiff)) ticks=\(String(format: "%.1f", ticks)) tickSize=\(tickSize) tickVal=\(tickValue) size=\(position.size) dir=\(direction) pnl=\(String(format: "%.2f", unrealized))")
+            updateState(key: key) { state in
+                state.unrealizedPnL = unrealized
+            }
+        } else {
+            updateState(key: key) { state in
+                state.unrealizedPnL = 0
+            }
+        }
+
+        guard var state = runStates[key], !state.placedOrderIds.isEmpty else { return }
+        let botContractId = runningBotInfo[key]?.contractId ?? ""
+
+        // Capture bracket child order IDs by matching customTag or by
+        // finding stop/limit orders on the same contract whose orderId is
+        // adjacent to a known parent order (bracket children typically have
+        // IDs close to the parent).
+        for order in realtime.liveOrders {
+            guard order.accountId == key.accountId,
+                  order.contractId == botContractId,
+                  !state.placedOrderIds.contains(order.id) else { continue }
+
+            // Match by customTag (if API propagates to bracket children)
+            if let tag = order.customTag, state.customTags.contains(tag) {
+                state.placedOrderIds.insert(order.id)
+                runStates[key]?.placedOrderIds.insert(order.id)
+                continue
+            }
+
+            // Match bracket children: stop or limit orders with IDs within
+            // a small range of any known parent order ID (brackets are
+            // created immediately after the parent, so IDs are sequential)
+            if order.type == OrderType.stop.rawValue ||
+               order.type == OrderType.limit.rawValue {
+                let isNearParent = state.placedOrderIds.contains {
+                    abs(order.id - $0) <= 5
+                }
+                if isNearParent {
+                    state.placedOrderIds.insert(order.id)
+                    runStates[key]?.placedOrderIds.insert(order.id)
+                }
+            }
+        }
+
+        let orderIds = state.placedOrderIds
         let matched = realtime.liveTrades.filter {
             orderIds.contains($0.orderId) && !$0.voided && $0.profitAndLoss != nil
         }

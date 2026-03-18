@@ -28,6 +28,21 @@ class ProjectXService {
     }
     var errorMessage: String?
 
+    /// Cached contract id → name mapping for display purposes.
+    var contractNameCache: [String: String] = [:]
+
+    /// Look up a display name for a contract ID. Falls back to the raw ID.
+    func contractName(for contractId: String) -> String {
+        contractNameCache[contractId] ?? contractId
+    }
+
+    /// Populate the cache from an array of contracts.
+    func cacheContractNames(_ contracts: [Contract]) {
+        for c in contracts {
+            contractNameCache[c.id] = c.name
+        }
+    }
+
     var savedUsername: String? { KeychainHelper.load(for: kUsername) }
     var savedApiKey:   String? { KeychainHelper.load(for: kApiKey)   }
     var sessionToken:  String? { KeychainHelper.load(for: kToken)    }

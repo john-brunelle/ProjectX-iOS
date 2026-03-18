@@ -8,7 +8,9 @@ extension ProjectXService {
         guard let response: ContractSearchResponse = await post(
             path: "/api/Contract/search", body: body, token: token
         ) else { return [] }
-        return response.contracts ?? []
+        let contracts = response.contracts ?? []
+        cacheContractNames(contracts)
+        return contracts
     }
 
     func contractById(_ contractId: String) async -> Contract? {
@@ -17,6 +19,7 @@ extension ProjectXService {
         guard let response: ContractByIdResponse = await post(
             path: "/api/Contract/searchById", body: body, token: token
         ) else { return nil }
+        if let c = response.contract { cacheContractNames([c]) }
         return response.contract
     }
 
@@ -26,7 +29,9 @@ extension ProjectXService {
         guard let response: ContractSearchResponse = await post(
             path: "/api/Contract/available", body: body, token: token
         ) else { return [] }
-        return response.contracts ?? []
+        let contracts = response.contracts ?? []
+        cacheContractNames(contracts)
+        return contracts
     }
 
     func retrieveBars(
