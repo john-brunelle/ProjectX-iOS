@@ -45,6 +45,8 @@ struct IndicatorEngine {
             return calculateOBV(bars: bars, smoothingPeriod: smoothing)
         case .ma(let fast, let slow, let useEMA):
             return calculateMA(bars: bars, fastPeriod: fast, slowPeriod: slow, useEMA: useEMA)
+        case .timerSignal(let interval, let mode):
+            return calculateTimerSignal(intervalSeconds: interval, mode: mode)
         }
     }
 
@@ -312,6 +314,32 @@ struct IndicatorEngine {
             values: [
                 "fastMA": currentFast,
                 "slowMA": currentSlow
+            ]
+        )
+    }
+
+    // MARK: - Timer Signal Calculator (Debug)
+
+    private static func calculateTimerSignal(intervalSeconds: Int, mode: TimerSignalMode) -> IndicatorResult {
+        let now = Date().timeIntervalSince1970
+        let intervalIndex = Int(floor(now / Double(intervalSeconds)))
+
+        let signal: Signal
+        switch mode {
+        case .alternating:
+            signal = intervalIndex.isMultiple(of: 2) ? .buy : .sell
+        case .longOnly:
+            signal = .buy
+        case .shortOnly:
+            signal = .sell
+        }
+
+        return IndicatorResult(
+            signal: signal,
+            indicatorType: .timerSignal,
+            values: [
+                "intervalSeconds": Double(intervalSeconds),
+                "intervalIndex": Double(intervalIndex)
             ]
         )
     }

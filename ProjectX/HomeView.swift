@@ -41,6 +41,7 @@ struct HomeView: View {
     @State private var showGlobalNuclearConfirmation = false
     @State private var showStopActions = false
     @State private var showAddBotSheet = false
+    @State private var showRemoveBotSheet = false
     @State private var conflictHintBotId: UUID?
     @State private var selectedBot: BotConfig?
 
@@ -184,6 +185,11 @@ struct HomeView: View {
         .sheet(isPresented: $showAddBotSheet) {
             if let accountId = service.activeAccount?.id {
                 BotAssignmentSheet(accountId: accountId)
+            }
+        }
+        .sheet(isPresented: $showRemoveBotSheet) {
+            if let accountId = service.activeAccount?.id {
+                BotRemovalSheet(accountId: accountId)
             }
         }
         .sheet(item: $selectedBot) { bot in
@@ -647,15 +653,28 @@ struct HomeView: View {
                 }
             }
 
-            Button {
-                showAddBotSheet = true
-            } label: {
-                Label("Add Bot", systemImage: "plus.circle.fill")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.blue)
-                    .frame(maxWidth: .infinity)
+            HStack {
+                Button {
+                    showAddBotSheet = true
+                } label: {
+                    Label("Add Bot", systemImage: "plus.circle.fill")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.blue)
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    showRemoveBotSheet = true
+                } label: {
+                    Label("Remove Bot", systemImage: "minus.circle.fill")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.red)
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.plain)
+                .disabled(bots.filter { activeAccountBotIds.contains($0.id) && !$0.isArchived }.isEmpty)
             }
-            .buttonStyle(.plain)
         }
     }
 
@@ -711,6 +730,17 @@ struct HomeView: View {
     // ═══════════════════════════════════════════
     // MARK: - Helpers
     // ═══════════════════════════════════════════
+
+    private func unassignBot(_ bot: BotConfig) {
+        let activeAccountId = service.activeAccount?.id ?? 0
+        if botRunner.isRunning(bot, accountId: activeAccountId) {
+            botRunner.stop(bot: bot, accountId: activeAccountId)
+        }
+        if let assignment = allAssignments.first(where: { $0.botId == bot.id && $0.accountId == activeAccountId }) {
+            modelContext.delete(assignment)
+            try? modelContext.save()
+        }
+    }
 
     private func formatPnL(_ value: Double) -> String {
         let formatter = NumberFormatter()

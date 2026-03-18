@@ -15,6 +15,7 @@ enum IndicatorType: String, Codable, CaseIterable, Identifiable {
     case macd
     case obv
     case ma
+    case timerSignal
 
     var id: String { rawValue }
 
@@ -23,34 +24,62 @@ enum IndicatorType: String, Codable, CaseIterable, Identifiable {
         case .rsi:  "RSI"
         case .macd: "MACD"
         case .obv:  "OBV"
-        case .ma:   "MA"
+        case .ma:          "MA"
+        case .timerSignal: "Timer Signal"
         }
     }
 
     var systemImage: String {
         switch self {
-        case .rsi:  "chart.line.uptrend.xyaxis"
-        case .macd: "point.3.connected.trianglepath.dotted"
-        case .obv:  "chart.bar.xaxis"
-        case .ma:   "line.diagonal"
+        case .rsi:         "chart.line.uptrend.xyaxis"
+        case .macd:        "point.3.connected.trianglepath.dotted"
+        case .obv:         "chart.bar.xaxis"
+        case .ma:          "line.diagonal"
+        case .timerSignal: "timer"
         }
     }
 
     var category: String {
         switch self {
-        case .rsi:  "Momentum"
-        case .macd: "Trend"
-        case .obv:  "Volume"
-        case .ma:   "Trend"
+        case .rsi:         "Momentum"
+        case .macd:        "Trend"
+        case .obv:         "Volume"
+        case .ma:          "Trend"
+        case .timerSignal: "Debug"
         }
     }
 
     var defaultParameters: IndicatorParameters {
         switch self {
-        case .rsi:  .defaultRSI()
-        case .macd: .defaultMACD()
-        case .obv:  .defaultOBV()
-        case .ma:   .defaultMA()
+        case .rsi:         .defaultRSI()
+        case .macd:        .defaultMACD()
+        case .obv:         .defaultOBV()
+        case .ma:          .defaultMA()
+        case .timerSignal: .defaultTimerSignal()
+        }
+    }
+
+    /// Whether this indicator is only visible in Developer Mode.
+    var isDevOnly: Bool {
+        switch self {
+        case .timerSignal: true
+        default: false
+        }
+    }
+}
+
+// MARK: - Timer Signal Mode
+
+enum TimerSignalMode: String, Codable, CaseIterable {
+    case alternating
+    case longOnly
+    case shortOnly
+
+    var displayName: String {
+        switch self {
+        case .alternating: "Alternating"
+        case .longOnly:    "Long Only"
+        case .shortOnly:   "Short Only"
         }
     }
 }
@@ -62,6 +91,7 @@ enum IndicatorParameters: Codable, Equatable {
     case macd(fastPeriod: Int, slowPeriod: Int, signalPeriod: Int)
     case obv(smoothingPeriod: Int)
     case ma(fastPeriod: Int, slowPeriod: Int, useEMA: Bool)
+    case timerSignal(intervalSeconds: Int, mode: TimerSignalMode)
 
     // MARK: Defaults
 
@@ -81,6 +111,10 @@ enum IndicatorParameters: Codable, Equatable {
         .ma(fastPeriod: 10, slowPeriod: 50, useEMA: true)
     }
 
+    static func defaultTimerSignal() -> IndicatorParameters {
+        .timerSignal(intervalSeconds: 60, mode: .alternating)
+    }
+
     // MARK: Summary
 
     var summary: String {
@@ -93,6 +127,8 @@ enum IndicatorParameters: Codable, Equatable {
             "Smoothing: \(smoothing)"
         case .ma(let fast, let slow, let useEMA):
             "\(useEMA ? "EMA" : "SMA") Fast: \(fast), Slow: \(slow)"
+        case .timerSignal(let interval, let mode):
+            "Interval: \(interval)s, \(mode.displayName)"
         }
     }
 
@@ -112,6 +148,15 @@ enum IndicatorParameters: Codable, Equatable {
             let type = useEMA ? "EMA" : "SMA"
             return "BUY when \(fast)-period \(type) crosses above \(slow)-period \(type). " +
             "SELL when fast \(type) crosses below slow \(type)."
+        case .timerSignal(let interval, let mode):
+            switch mode {
+            case .alternating:
+                return "Alternates BUY and SELL every \(interval) seconds. For testing only."
+            case .longOnly:
+                return "Sends BUY signal every \(interval) seconds. For testing only."
+            case .shortOnly:
+                return "Sends SELL signal every \(interval) seconds. For testing only."
+            }
         }
     }
 }

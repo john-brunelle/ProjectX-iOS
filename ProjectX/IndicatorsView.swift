@@ -140,6 +140,10 @@ struct IndicatorEditorView: View {
     @State private var maSlow: Int = 50
     @State private var maUseEMA: Bool = true
 
+    // Timer Signal params
+    @State private var timerInterval: Int = 60
+    @State private var timerMode: TimerSignalMode = .alternating
+
     var isEditing: Bool { existing != nil }
 
     var body: some View {
@@ -178,6 +182,8 @@ struct IndicatorEditorView: View {
                         obvParametersSection
                     case .ma:
                         maParametersSection
+                    case .timerSignal:
+                        timerSignalParametersSection
                     }
                 }
 
@@ -250,6 +256,18 @@ struct IndicatorEditorView: View {
         Toggle("Use EMA (vs SMA)", isOn: $maUseEMA)
     }
 
+    // MARK: Timer Signal Parameters
+
+    @ViewBuilder
+    private var timerSignalParametersSection: some View {
+        Stepper("Interval: \(timerInterval)s", value: $timerInterval, in: 5...3600)
+        Picker("Mode", selection: $timerMode) {
+            ForEach(TimerSignalMode.allCases, id: \.self) { mode in
+                Text(mode.displayName).tag(mode)
+            }
+        }
+    }
+
     // MARK: Current Parameters (for signal description)
 
     private var currentParameters: IndicatorParameters {
@@ -257,7 +275,8 @@ struct IndicatorEditorView: View {
         case .rsi:  .rsi(period: rsiPeriod, overbought: rsiOverbought, oversold: rsiOversold)
         case .macd: .macd(fastPeriod: macdFast, slowPeriod: macdSlow, signalPeriod: macdSignal)
         case .obv:  .obv(smoothingPeriod: obvSmoothing)
-        case .ma:   .ma(fastPeriod: maFast, slowPeriod: maSlow, useEMA: maUseEMA)
+        case .ma:          .ma(fastPeriod: maFast, slowPeriod: maSlow, useEMA: maUseEMA)
+        case .timerSignal: .timerSignal(intervalSeconds: timerInterval, mode: timerMode)
         }
     }
 
@@ -283,6 +302,9 @@ struct IndicatorEditorView: View {
             maFast = fast
             maSlow = slow
             maUseEMA = useEMA
+        case .timerSignal(let interval, let mode):
+            timerInterval = interval
+            timerMode = mode
         }
     }
 
@@ -296,6 +318,8 @@ struct IndicatorEditorView: View {
             obvSmoothing = 20
         case .ma:
             maFast = 10; maSlow = 50; maUseEMA = true
+        case .timerSignal:
+            timerInterval = 60; timerMode = .alternating
         }
     }
 
@@ -304,7 +328,8 @@ struct IndicatorEditorView: View {
         case .rsi:  .rsi(period: rsiPeriod, overbought: rsiOverbought, oversold: rsiOversold)
         case .macd: .macd(fastPeriod: macdFast, slowPeriod: macdSlow, signalPeriod: macdSignal)
         case .obv:  .obv(smoothingPeriod: obvSmoothing)
-        case .ma:   .ma(fastPeriod: maFast, slowPeriod: maSlow, useEMA: maUseEMA)
+        case .ma:          .ma(fastPeriod: maFast, slowPeriod: maSlow, useEMA: maUseEMA)
+        case .timerSignal: .timerSignal(intervalSeconds: timerInterval, mode: timerMode)
         }
 
         let trimmedName = name.trimmingCharacters(in: .whitespaces)
@@ -328,13 +353,15 @@ struct IndicatorEditorView: View {
 
 struct IndicatorTypePickerSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @AppStorage("pref_developerMode") private var developerMode = false
     @Binding var selected: IndicatorType
     @State private var searchText = ""
 
     private var grouped: [(category: String, types: [IndicatorType])] {
+        let available = IndicatorType.allCases.filter { !$0.isDevOnly || developerMode }
         let filtered = searchText.isEmpty
-            ? IndicatorType.allCases
-            : IndicatorType.allCases.filter {
+            ? available
+            : available.filter {
                 $0.displayName.localizedCaseInsensitiveContains(searchText) ||
                 $0.category.localizedCaseInsensitiveContains(searchText)
               }
