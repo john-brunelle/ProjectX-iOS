@@ -100,6 +100,9 @@ class ProjectXService {
         request.setValue("text/plain",       forHTTPHeaderField: "accept")
         if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
 
+        // ── Rate Limiter Governor ──
+        await RateLimiter.shared.acquire(bucket: RateLimiter.bucket(for: path))
+
         let start = Date()
         let requestBodyStr = try? String(data: JSONEncoder().encode(body), encoding: .utf8)
 

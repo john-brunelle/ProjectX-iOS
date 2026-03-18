@@ -15,7 +15,8 @@ struct ProjectXApp: App {
             "pref_notifyOnStopLoss": false,
             "pref_notifyOnTakeProfit": false,
             "pref_notifyOnOrderFill": false,
-            "pref_notifyOnBotError": false
+            "pref_notifyOnBotError": false,
+            "pref_enableRateLimiter": true
         ])
         _ = NotificationService.shared
     }

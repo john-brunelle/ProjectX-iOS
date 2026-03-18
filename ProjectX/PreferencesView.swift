@@ -20,6 +20,9 @@ struct PreferencesView: View {
     @AppStorage("pref_defaultQuantity") private var defaultQuantity = 1
     @AppStorage("pref_autoRestoreBots") private var autoRestoreBots = true
 
+    // MARK: - Rate Limiter
+    @AppStorage("pref_enableRateLimiter") private var enableRateLimiter = true
+
     // MARK: - Notifications
     @AppStorage("pref_notifyOnStopLoss") private var notifyOnStopLoss = false
     @AppStorage("pref_notifyOnTakeProfit") private var notifyOnTakeProfit = false
@@ -43,10 +46,11 @@ struct PreferencesView: View {
                         Text("200 requests / 60 sec")
                             .foregroundStyle(.secondary)
                     }
+                    Toggle("Enable Rate Limiter", isOn: $enableRateLimiter)
                 } header: {
                     Text("Rate Limits")
                 } footer: {
-                    Text("Exceeding these limits will result in errors from the API. These limits are subject to change.")
+                    Text("Exceeding these limits will result in errors from the API. These limits are subject to change. The rate limiter throttles outgoing requests to stay within these limits.")
                 }
 
                 // ── Risk Guards ──────────────────────
