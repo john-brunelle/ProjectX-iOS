@@ -449,14 +449,23 @@ struct HomeView: View {
         return Set(allAssignments.filter { $0.accountId == accountId }.map(\.botId))
     }
 
+    /// Bots assigned to the active account, sorted by their assignment sort order.
+    private var sortedAccountBots: [BotConfig] {
+        let accountId = service.activeAccount?.id ?? 0
+        let assignments = allAssignments.filter { $0.accountId == accountId }
+        let orderMap = Dictionary(uniqueKeysWithValues: assignments.map { ($0.botId, $0.sortOrder) })
+        return bots
+            .filter { activeAccountBotIds.contains($0.id) && !$0.isArchived && $0.isActive }
+            .sorted { (orderMap[$0.id] ?? 0) < (orderMap[$1.id] ?? 0) }
+    }
+
     private var botsCard: some View {
         card("Bots", systemImage: "gearshape.2.fill", destination: .bots) {
             let accountBots = bots.filter { activeAccountBotIds.contains($0.id) && !$0.isArchived }
             if !accountBots.isEmpty {
-                VStack(spacing: 14) {
-                    ForEach(accountBots.filter(\.isActive).sorted { a, _ in
-                        botRunner.isRunning(a, accountId: service.activeAccount?.id ?? 0)
-                    }.prefix(5)) { bot in
+                VStack(spacing: 0) {
+                    List {
+                        ForEach(sortedAccountBots.prefix(5)) { bot in
                         let activeAccountId = service.activeAccount?.id ?? 0
                         let running = botRunner.isRunning(bot, accountId: activeAccountId)
                         let state = botRunner.runState(for: bot, accountId: activeAccountId)
@@ -583,7 +592,16 @@ struct HomeView: View {
                         .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: 8))
                         .contentShape(Rectangle())
                         .onTapGesture { selectedBot = bot }
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                        .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
                     }
+                    .onMove(perform: moveBots)
+                    }
+                    .listStyle(.plain)
+                    .frame(minHeight: CGFloat(min(sortedAccountBots.count, 5)) * 100)
+                    .scrollDisabled(true)
+
                     let activeBots = accountBots.filter(\.isActive)
                     if activeBots.count > 5 {
                         Text("+\(activeBots.count - 5) more bots")
@@ -730,6 +748,29 @@ struct HomeView: View {
     // ═══════════════════════════════════════════
     // MARK: - Helpers
     // ═══════════════════════════════════════════
+
+    private func moveBots(from source: IndexSet, to destination: Int) {
+        let accountId = service.activeAccount?.id ?? 0
+        var ordered = sortedAccountBots.prefix(5).map(\.id)
+        ordered.move(fromOffsets: source, toOffset: destination)
+
+        // Update sort order on each assignment
+        for (index, botId) in ordered.enumerated() {
+            if let assignment = allAssignments.first(where: { $0.botId == botId && $0.accountId == accountId }) {
+                assignment.sortOrder = index
+            }
+        }
+        // Also update any bots beyond the visible 5
+        let allSorted = sortedAccountBots
+        if allSorted.count > 5 {
+            for i in 5..<allSorted.count {
+                if let assignment = allAssignments.first(where: { $0.botId == allSorted[i].id && $0.accountId == accountId }) {
+                    assignment.sortOrder = i
+                }
+            }
+        }
+        try? modelContext.save()
+    }
 
     private func unassignBot(_ bot: BotConfig) {
         let activeAccountId = service.activeAccount?.id ?? 0

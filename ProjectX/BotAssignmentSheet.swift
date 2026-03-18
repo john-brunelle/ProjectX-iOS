@@ -85,7 +85,11 @@ struct BotAssignmentSheet: View {
     }
 
     private func assignBot(_ bot: BotConfig) {
-        modelContext.insert(AccountBotAssignment(accountId: accountId, botId: bot.id))
+        let maxOrder = allAssignments
+            .filter { $0.accountId == accountId }
+            .map(\.sortOrder)
+            .max() ?? -1
+        modelContext.insert(AccountBotAssignment(accountId: accountId, botId: bot.id, sortOrder: maxOrder + 1))
         try? modelContext.save()
     }
 }
