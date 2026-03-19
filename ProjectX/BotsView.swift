@@ -238,8 +238,8 @@ struct BotRow: View {
         return bot.isActive ? .blue : .secondary
     }
 
-    private var aggregatedSessionPnL: Double {
-        runStates.values.reduce(0) { $0 + $1.sessionPnL }
+    private var aggregatedTodayPnL: Double {
+        runStates.values.reduce(0) { $0 + $1.todayPnL }
     }
 
     private var activeRunKeys: [BotRunKey] {
@@ -304,8 +304,8 @@ struct BotRow: View {
                     Text("(\(bot.lifetimeTradeCount) trade\(bot.lifetimeTradeCount == 1 ? "" : "s"))")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
-                    if isRunning && aggregatedSessionPnL != 0 {
-                        Text("· \(formatPnL(aggregatedSessionPnL)) session")
+                    if isRunning && aggregatedTodayPnL != 0 {
+                        Text("· \(formatPnL(aggregatedTodayPnL)) today")
                             .font(.caption2)
                             .foregroundStyle(.tertiary)
                     }

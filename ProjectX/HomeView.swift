@@ -619,9 +619,10 @@ struct HomeView: View {
                             HStack(spacing: 10) {
                                 // Session — always visible
                                 HStack(spacing: 3) {
-                                    let sessionValues: (realized: Double, unrealized: Double, trades: Int) = {
-                                        guard running, let state else { return (0, 0, 0) }
+                                    let todayValues: (realized: Double, unrealized: Double, trades: Int) = {
+                                        // Unrealized: only when running with live data
                                         let unrealized: Double = {
+                                            guard running else { return 0 }
                                             if let quote = realtime.contractQuotes[bot.contractId],
                                                let pos = realtime.livePositions.first(where: {
                                                    $0.accountId == activeAccountId && $0.contractId == bot.contractId
@@ -631,28 +632,37 @@ struct HomeView: View {
                                                 let direction: Double = pos.isLong ? 1 : -1
                                                 return (priceDiff / tick.tickSize) * tick.tickValue * direction
                                             }
-                                            return state.unrealizedPnL
+                                            return state?.unrealizedPnL ?? 0
                                         }()
+
+                                        // Realized: tag-matched + accumulated order IDs (survives REST refresh)
                                         let realized: Double = {
                                             if realtime.isUserConnected {
+                                                let botPrefix = bot.tagPrefix
+                                                let tagIds = Set(realtime.liveOrders
+                                                    .filter { $0.accountId == activeAccountId && ($0.customTag?.hasPrefix(botPrefix) == true) }
+                                                    .map(\.id))
+                                                let allIds = tagIds.union(state?.placedOrderIds ?? [])
                                                 let matched = realtime.liveTrades.filter {
-                                                    state.placedOrderIds.contains($0.orderId) && !$0.voided && $0.profitAndLoss != nil
+                                                    allIds.contains($0.orderId) && !$0.voided && $0.profitAndLoss != nil
                                                 }
                                                 return matched.compactMap(\.profitAndLoss).reduce(0, +)
                                             }
-                                            return state.sessionPnL
+                                            return state?.todayPnL ?? 0
                                         }()
-                                        return (realized, unrealized, state.sessionTradeCount)
-                                    }()
-                                    let totalSession = sessionValues.realized + sessionValues.unrealized
 
-                                    Text("Session:")
+                                        let trades = state?.todayTradeCount ?? 0
+                                        return (realized, unrealized, trades)
+                                    }()
+                                    let totalSession = todayValues.realized + todayValues.unrealized
+
+                                    Text("Today:")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                     Text(formatPnL(totalSession))
                                         .font(.caption.weight(.semibold))
                                         .foregroundStyle(totalSession >= 0 ? .green : .red)
-                                    Text("(\(sessionValues.trades))")
+                                    Text("(\(todayValues.trades))")
                                         .font(.caption2)
                                         .foregroundStyle(.tertiary)
                                 }

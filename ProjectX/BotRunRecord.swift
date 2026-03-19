@@ -14,8 +14,8 @@ final class BotRunRecord {
     var botId: UUID
     var accountId: Int
     var startedAt: Date
-    var sessionPnL: Double = 0
-    var sessionTradeCount: Int = 0
+    @Attribute(originalName: "sessionPnL") var todayPnL: Double = 0
+    @Attribute(originalName: "sessionTradeCount") var todayTradeCount: Int = 0
 
     init(botId: UUID, accountId: Int) {
         self.botId     = botId

@@ -70,9 +70,9 @@ struct BotRunState {
     // P&L tracking — matched via orderId against liveTrades
     var placedOrderIds: Set<Int> = []
     var customTags: Set<String> = []      // tags from parent orders to match bracket children
-    var sessionPnL: Double = 0            // realized P&L from closed trades
+    var todayPnL: Double = 0            // realized P&L from closed trades
     var unrealizedPnL: Double = 0         // unrealized P&L from open position
-    var sessionTradeCount: Int = 0
+    var todayTradeCount: Int = 0
 }
 
 // MARK: - Bot Runner
@@ -141,6 +141,26 @@ class BotRunner {
             return
         }
 
+        // Check for existing position on this contract — adopt if ours, reject if foreign
+        if let existingPos = realtime.livePositions.first(where: {
+            $0.accountId == accountId && $0.contractId == bot.contractId
+        }) {
+            let botPrefix = bot.tagPrefix
+            let hasBotOrders = realtime.liveOrders.contains {
+                $0.accountId == accountId && $0.contractId == bot.contractId
+                && ($0.customTag?.hasPrefix(botPrefix) == true)
+            }
+            if !hasBotOrders {
+                let dir = existingPos.isLong ? "long" : "short"
+                logToState(key: key, type: .error,
+                           message: "Cannot start: existing \(dir) position on \(bot.contractName) was not opened by this bot. Close the position first.")
+                return
+            }
+            // Position is ours — bot will adopt it and track P&L
+            logToState(key: key, type: .info,
+                       message: "Adopting existing \(existingPos.isLong ? "long" : "short") position on \(bot.contractName)")
+        }
+
         // Stop this specific instance if already running
         stopInstance(key: key, bot: bot)
 
@@ -196,10 +216,6 @@ class BotRunner {
 
     private func stopInstance(key: BotRunKey, bot: BotConfig) {
         if let existing = runStates[key] {
-            // Flush session P&L into lifetime before clearing
-            bot.lifetimePnL += existing.sessionPnL
-            bot.lifetimeTradeCount += existing.sessionTradeCount
-
             existing.task?.cancel()
             var updated = existing
             updated.task = nil
@@ -207,7 +223,7 @@ class BotRunner {
             runStates[key] = updated
         }
 
-        // Close positions and/or cancel orders on this contract if enabled
+        // Close positions and/or cancel orders, then flush P&L to lifetime
         let closePositions = UserDefaults.standard.bool(forKey: "pref_closePositionsOnStop")
         let cancelOrders = UserDefaults.standard.bool(forKey: "pref_cancelOrdersOnStop")
         if closePositions || cancelOrders {
@@ -231,7 +247,14 @@ class BotRunner {
                         logToState(key: key, type: .info, message: "Cancelled \(openOrders.count) order(s) on \(bot.contractName)")
                     }
                 }
+                // Wait briefly for the close trade to arrive via SignalR
+                try? await Task.sleep(for: .seconds(2))
+                // Now flush today's P&L (including the close trade) to lifetime
+                self.flushPnLToLifetime(key: key, bot: bot)
             }
+        } else {
+            // No close-on-stop — flush immediately
+            flushPnLToLifetime(key: key, bot: bot)
         }
 
         runningBotInfo.removeValue(forKey: key)
@@ -368,15 +391,15 @@ class BotRunner {
     }
 
     /// Resets session P&L and trade count to zero for a running bot instance.
-    func resetSessionPnL(for bot: BotConfig, accountId: Int) {
+    func resetTodayPnL(for bot: BotConfig, accountId: Int) {
         let key = BotRunKey(botId: bot.id, accountId: accountId)
         guard runStates[key] != nil else { return }
-        runStates[key]?.sessionPnL = 0
+        runStates[key]?.todayPnL = 0
         runStates[key]?.unrealizedPnL = 0
-        runStates[key]?.sessionTradeCount = 0
+        runStates[key]?.todayTradeCount = 0
         runStates[key]?.placedOrderIds.removeAll()
         runStates[key]?.customTags.removeAll()
-        flushSessionPnL(key: key, pnl: 0, tradeCount: 0)
+        flushTodayPnL(key: key, pnl: 0, tradeCount: 0)
     }
 
     /// Clears the in-memory log and deletes all persisted records for a bot instance.
@@ -448,8 +471,8 @@ class BotRunner {
                 predicate: #Predicate { $0.botId == botId && $0.accountId == acctId }
             )
             if let record = try? ctx.fetch(descriptor).first {
-                state.sessionPnL = record.sessionPnL
-                state.sessionTradeCount = record.sessionTradeCount
+                state.todayPnL = record.todayPnL
+                state.todayTradeCount = record.todayTradeCount
             }
         }
 
@@ -535,7 +558,7 @@ class BotRunner {
             lastPrice = fallback
             logToState(key: key, type: .info, message: "Price source: REST fallback (\(String(format: "%.2f", fallback)))")
         }
-        updateSessionPnL(key: key, bot: bot, lastPrice: lastPrice)
+        updateTodayPnL(key: key, bot: bot, lastPrice: lastPrice)
 
         switch signal {
         case .buy:
@@ -632,7 +655,7 @@ class BotRunner {
 
     // MARK: - Session P&L
 
-    private func updateSessionPnL(key: BotRunKey, bot: BotConfig, lastPrice: Double) {
+    private func updateTodayPnL(key: BotRunKey, bot: BotConfig, lastPrice: Double) {
         // Calculate unrealized P&L from open position (even before any trades)
         if let position = realtime.livePositions.first(where: {
             $0.accountId == key.accountId && $0.contractId == bot.contractId
@@ -657,44 +680,24 @@ class BotRunner {
             }
         }
 
-        guard var state = runStates[key], !state.placedOrderIds.isEmpty else { return }
-        let botContractId = runningBotInfo[key]?.contractId ?? ""
+        // Tag-based order ownership: find all orders belonging to this bot
+        // (currently visible in liveOrders — includes open + recently filled via SignalR)
+        let botPrefix = bot.tagPrefix
+        let tagMatchedIds = Set(realtime.liveOrders
+            .filter { $0.accountId == key.accountId && ($0.customTag?.hasPrefix(botPrefix) == true) }
+            .map(\.id))
 
-        // Capture bracket child order IDs by matching customTag or by
-        // finding stop/limit orders on the same contract whose orderId is
-        // adjacent to a known parent order (bracket children typically have
-        // IDs close to the parent).
-        for order in realtime.liveOrders {
-            guard order.accountId == key.accountId,
-                  order.contractId == botContractId,
-                  !state.placedOrderIds.contains(order.id) else { continue }
-
-            // Match by customTag (if API propagates to bracket children)
-            if let tag = order.customTag, state.customTags.contains(tag) {
-                state.placedOrderIds.insert(order.id)
-                runStates[key]?.placedOrderIds.insert(order.id)
-                continue
-            }
-
-            // Match bracket children: stop or limit orders with IDs within
-            // a small range of any known parent order ID (brackets are
-            // created immediately after the parent, so IDs are sequential)
-            if order.type == OrderType.stop.rawValue ||
-               order.type == OrderType.limit.rawValue {
-                let isNearParent = state.placedOrderIds.contains {
-                    abs(order.id - $0) <= 5
-                }
-                if isNearParent {
-                    state.placedOrderIds.insert(order.id)
-                    runStates[key]?.placedOrderIds.insert(order.id)
-                }
-            }
+        // Merge with accumulated placedOrderIds (catches orders evicted from liveOrders by REST refresh)
+        updateState(key: key) { state in
+            state.placedOrderIds.formUnion(tagMatchedIds)
         }
+        let allBotOrderIds = (runStates[key]?.placedOrderIds ?? []).union(tagMatchedIds)
 
-        let orderIds = state.placedOrderIds
+        // Match trades by all known bot-owned order IDs
         let matched = realtime.liveTrades.filter {
-            orderIds.contains($0.orderId) && !$0.voided && $0.profitAndLoss != nil
+            allBotOrderIds.contains($0.orderId) && !$0.voided && $0.profitAndLoss != nil
         }
+
         // Fire SL/TP notifications for newly matched trades
         let botName = runningBotInfo[key]?.name ?? "Bot"
         let contractId = runningBotInfo[key]?.contractId ?? ""
@@ -712,14 +715,14 @@ class BotRunner {
         let pnl = matched.compactMap { $0.profitAndLoss }.reduce(0, +)
         let count = matched.count
         updateState(key: key) { state in
-            state.sessionPnL = pnl
-            state.sessionTradeCount = count
+            state.todayPnL = pnl
+            state.todayTradeCount = count
         }
-        flushSessionPnL(key: key, pnl: pnl, tradeCount: count)
+        flushTodayPnL(key: key, pnl: pnl, tradeCount: count)
     }
 
     /// Persists session P&L to the run record so it survives force closes.
-    private func flushSessionPnL(key: BotRunKey, pnl: Double, tradeCount: Int) {
+    private func flushTodayPnL(key: BotRunKey, pnl: Double, tradeCount: Int) {
         guard let ctx = modelContext else { return }
         let botId = key.botId
         let accountId = key.accountId
@@ -727,9 +730,16 @@ class BotRunner {
             predicate: #Predicate { $0.botId == botId && $0.accountId == accountId }
         )
         guard let record = try? ctx.fetch(descriptor).first else { return }
-        record.sessionPnL = pnl
-        record.sessionTradeCount = tradeCount
+        record.todayPnL = pnl
+        record.todayTradeCount = tradeCount
         try? ctx.save()
+    }
+
+    /// Flushes today's realized P&L from the current run state into the bot's lifetime totals.
+    private func flushPnLToLifetime(key: BotRunKey, bot: BotConfig) {
+        guard let state = runStates[key] else { return }
+        bot.lifetimePnL += state.todayPnL
+        bot.lifetimeTradeCount += state.todayTradeCount
     }
 
     // MARK: - Polling Interval

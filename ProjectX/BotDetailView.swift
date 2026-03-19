@@ -345,7 +345,7 @@ struct BotDetailView: View {
                     if pnl.realized != 0 || pnl.tradeCount > 0 || pnl.unrealized != 0 {
                         let totalSession = pnl.realized + pnl.unrealized
                         HStack {
-                            Text("Session P&L").foregroundStyle(.secondary)
+                            Text("Today's P&L").foregroundStyle(.secondary)
                             Spacer()
                             Text(formatPnL(totalSession))
                                 .fontWeight(.semibold)
@@ -585,23 +585,28 @@ struct BotDetailView: View {
         }()
 
         let realized: Double = {
-            if realtime.isUserConnected, let state {
+            if realtime.isUserConnected {
+                let botPrefix = bot.tagPrefix
+                let tagIds = Set(realtime.liveOrders
+                    .filter { $0.accountId == accountId && ($0.customTag?.hasPrefix(botPrefix) == true) }
+                    .map(\.id))
+                let allIds = tagIds.union(state?.placedOrderIds ?? [])
                 let matched = realtime.liveTrades.filter {
-                    state.placedOrderIds.contains($0.orderId) && !$0.voided && $0.profitAndLoss != nil
+                    allIds.contains($0.orderId) && !$0.voided && $0.profitAndLoss != nil
                 }
                 return matched.compactMap(\.profitAndLoss).reduce(0, +)
             }
-            return state?.sessionPnL ?? 0
+            return state?.todayPnL ?? 0
         }()
 
-        return (realized, unrealized, state?.sessionTradeCount ?? 0)
+        return (realized, unrealized, state?.todayTradeCount ?? 0)
     }
 
     // MARK: - Reset P&L
 
     private var resetPnLDialogTitle: String {
         switch resetPnLTarget {
-        case .session:  return "Reset Session Stats?"
+        case .session:  return "Reset Today's Stats?"
         case .lifetime: return "Reset Lifetime Stats?"
         case .all:      return "Reset All Stats?"
         }
@@ -612,7 +617,7 @@ struct BotDetailView: View {
         case .session:
             return "This will zero out the current session's P&L and trade count. This cannot be undone."
         case .lifetime:
-            return "This will zero out all-time P&L and trade count. Session stats are kept. This cannot be undone."
+            return "This will zero out all-time P&L and trade count. Today's stats are kept. This cannot be undone."
         case .all:
             return "This will zero out both session and lifetime P&L and trade counts. This cannot be undone."
         }
@@ -622,7 +627,7 @@ struct BotDetailView: View {
         switch resetPnLTarget {
         case .session:
             for acctId in runningAccountIds {
-                botRunner.resetSessionPnL(for: bot, accountId: acctId)
+                botRunner.resetTodayPnL(for: bot, accountId: acctId)
             }
         case .lifetime:
             bot.lifetimePnL = 0
@@ -631,7 +636,7 @@ struct BotDetailView: View {
             try? modelContext.save()
         case .all:
             for acctId in runningAccountIds {
-                botRunner.resetSessionPnL(for: bot, accountId: acctId)
+                botRunner.resetTodayPnL(for: bot, accountId: acctId)
             }
             bot.lifetimePnL = 0
             bot.lifetimeTradeCount = 0
@@ -655,7 +660,7 @@ struct BotDetailView: View {
             VStack(spacing: 8) {
                 HStack(spacing: 0) {
                     pnlTile(
-                        label: isRunning ? "Session P&L" : "Last Session",
+                        label: isRunning ? "Today's P&L" : "Last Session",
                         value: aggregatedPnL,
                         trades: aggregatedTrades,
                         showNA: !isRunning
@@ -689,7 +694,7 @@ struct BotDetailView: View {
                                 resetPnLTarget = .session
                                 showResetPnLConfirmation = true
                             } label: {
-                                Label("Reset Session", systemImage: "arrow.counterclockwise")
+                                Label("Reset Today", systemImage: "arrow.counterclockwise")
                             }
                         }
                         Button(role: .destructive) {

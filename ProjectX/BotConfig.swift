@@ -113,6 +113,10 @@ final class BotConfig {
         return barUnitNumber == 1 ? unitLabel : "\(barUnitNumber) \(unitLabel)"
     }
 
+    /// Durable ownership prefix used in order customTags (e.g. "bot-A1B2C3D4").
+    /// Matches orders placed by this bot across restarts and cold starts.
+    var tagPrefix: String { "bot-\(id.uuidString.prefix(8))" }
+
     // MARK: Init
 
     init(
