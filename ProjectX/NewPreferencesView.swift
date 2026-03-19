@@ -11,6 +11,9 @@ struct PreferencesView: View {
 
     @Environment(ThemeManager.self) var themeManager
 
+    // MARK: - Orientation Lock
+    @AppStorage("pref_orientationLock") private var orientationLock = "auto"
+
     // MARK: - Notifications
     @AppStorage("pref_notifyOnStopLoss") private var notifyOnStopLoss = false
     @AppStorage("pref_notifyOnTakeProfit") private var notifyOnTakeProfit = false
@@ -30,6 +33,17 @@ struct PreferencesView: View {
                         ThemesView()
                     } label: {
                         Label("Themes", systemImage: "paintbrush.fill")
+                    }
+                    Picker("Orientation", selection: $orientationLock) {
+                        Label("Auto", systemImage: "arrow.triangle.2.circlepath")
+                            .tag("auto")
+                        Label("Portrait", systemImage: "iphone")
+                            .tag("portrait")
+                        Label("Landscape", systemImage: "iphone.landscape")
+                            .tag("landscape")
+                    }
+                    .onChange(of: orientationLock) { _, _ in
+                        OrientationManager.apply(orientationLock)
                     }
                 } header: {
                     Text("Appearance")

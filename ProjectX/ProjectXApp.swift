@@ -1,8 +1,17 @@
 import SwiftUI
 import SwiftData
 
+// ── App Delegate for orientation lock ────────
+class AppDelegate: NSObject, UIApplicationDelegate {
+    func application(_ application: UIApplication,
+                     supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
+        OrientationManager.supportedOrientations
+    }
+}
+
 @main
 struct PojectXApp: App {
+    @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @State private var service        = ProjectXService.shared
     @State private var realtime       = RealtimeService.shared
     @State private var themeManager   = ThemeManager.shared
@@ -12,6 +21,8 @@ struct PojectXApp: App {
     let modelContainer: ModelContainer
 
     init() {
+        OrientationManager.restoreFromDefaults()
+
         UserDefaults.standard.register(defaults: [
             "pref_autoRestoreBots": true,
             "pref_notifyOnStopLoss": false,
