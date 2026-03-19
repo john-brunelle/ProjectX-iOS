@@ -12,6 +12,7 @@ import SwiftData
 
 struct BotDetailView: View {
     @Environment(ProjectXService.self) var service
+    @Environment(RealtimeService.self) var realtime
     @Environment(BotRunner.self) var botRunner
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
@@ -58,6 +59,10 @@ struct BotDetailView: View {
     // ── Other UI state ──
     @State private var showArchiveConfirmation = false
     @State private var showClearLogConfirmation = false
+    @State private var showResetPnLConfirmation = false
+    @State private var resetPnLTarget: ResetPnLTarget = .session
+
+    private enum ResetPnLTarget { case session, lifetime, all }
     @State private var showAccountPicker = false
 
     private var isRunning: Bool { botRunner.isRunningAnywhere(bot) }
@@ -116,6 +121,14 @@ struct BotDetailView: View {
             }
             .sheet(item: $editingIndicator) { indicator in
                 IndicatorEditorView(existing: indicator)
+            }
+            .confirmationDialog(resetPnLDialogTitle, isPresented: $showResetPnLConfirmation) {
+                Button("Reset", role: .destructive) {
+                    resetPnL()
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text(resetPnLDialogMessage)
             }
             .confirmationDialog("Archive Bot?", isPresented: $showArchiveConfirmation) {
                 Button("Archive", role: .destructive) {
@@ -328,20 +341,21 @@ struct BotDetailView: View {
                             .font(.caption)
                         }
                     }
-                    if state.sessionPnL != 0 || state.sessionTradeCount > 0 || state.unrealizedPnL != 0 {
-                        let totalSession = state.sessionPnL + state.unrealizedPnL
+                    let pnl = livePnL(accountId: accountId)
+                    if pnl.realized != 0 || pnl.tradeCount > 0 || pnl.unrealized != 0 {
+                        let totalSession = pnl.realized + pnl.unrealized
                         HStack {
                             Text("Session P&L").foregroundStyle(.secondary)
                             Spacer()
                             Text(formatPnL(totalSession))
                                 .fontWeight(.semibold)
                                 .foregroundStyle(totalSession >= 0 ? .green : .red)
-                            if state.unrealizedPnL != 0 {
-                                Text("(\(formatPnL(state.unrealizedPnL)) open)")
+                            if pnl.unrealized != 0 {
+                                Text("(\(formatPnL(pnl.unrealized)) open)")
                                     .font(.caption)
                                     .foregroundStyle(.orange)
                             }
-                            Text("(\(state.sessionTradeCount))")
+                            Text("(\(pnl.tradeCount))")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -550,21 +564,94 @@ struct BotDetailView: View {
         }
     }
 
+    // MARK: - Live P&L Helper
+
+    /// Computes realized + unrealized P&L using SignalR live data when available,
+    /// falling back to BotRunState values from the poll cycle.
+    private func livePnL(accountId: Int) -> (realized: Double, unrealized: Double, tradeCount: Int) {
+        let state = botRunner.runState(for: bot, accountId: accountId)
+
+        let unrealized: Double = {
+            if let quote = realtime.contractQuotes[bot.contractId],
+               let pos = realtime.livePositions.first(where: {
+                   $0.accountId == accountId && $0.contractId == bot.contractId
+               }),
+               let tick = botRunner.contractTickInfo[bot.contractId] {
+                let diff = quote.lastPrice - pos.averagePrice
+                let dir: Double = pos.isLong ? 1 : -1
+                return (diff / tick.tickSize) * tick.tickValue * dir
+            }
+            return state?.unrealizedPnL ?? 0
+        }()
+
+        let realized: Double = {
+            if realtime.isUserConnected, let state {
+                let matched = realtime.liveTrades.filter {
+                    state.placedOrderIds.contains($0.orderId) && !$0.voided && $0.profitAndLoss != nil
+                }
+                return matched.compactMap(\.profitAndLoss).reduce(0, +)
+            }
+            return state?.sessionPnL ?? 0
+        }()
+
+        return (realized, unrealized, state?.sessionTradeCount ?? 0)
+    }
+
+    // MARK: - Reset P&L
+
+    private var resetPnLDialogTitle: String {
+        switch resetPnLTarget {
+        case .session:  return "Reset Session Stats?"
+        case .lifetime: return "Reset Lifetime Stats?"
+        case .all:      return "Reset All Stats?"
+        }
+    }
+
+    private var resetPnLDialogMessage: String {
+        switch resetPnLTarget {
+        case .session:
+            return "This will zero out the current session's P&L and trade count. This cannot be undone."
+        case .lifetime:
+            return "This will zero out all-time P&L and trade count. Session stats are kept. This cannot be undone."
+        case .all:
+            return "This will zero out both session and lifetime P&L and trade counts. This cannot be undone."
+        }
+    }
+
+    private func resetPnL() {
+        switch resetPnLTarget {
+        case .session:
+            for acctId in runningAccountIds {
+                botRunner.resetSessionPnL(for: bot, accountId: acctId)
+            }
+        case .lifetime:
+            bot.lifetimePnL = 0
+            bot.lifetimeTradeCount = 0
+            bot.updatedAt = Date()
+            try? modelContext.save()
+        case .all:
+            for acctId in runningAccountIds {
+                botRunner.resetSessionPnL(for: bot, accountId: acctId)
+            }
+            bot.lifetimePnL = 0
+            bot.lifetimeTradeCount = 0
+            bot.updatedAt = Date()
+            try? modelContext.save()
+        }
+    }
+
     // MARK: - Performance Section
 
     @ViewBuilder
     private var performanceSection: some View {
         Section("Performance") {
-            let aggregatedPnL = runningAccountIds.reduce(0.0) { sum, acctId in
-                let state = botRunner.runState(for: bot, accountId: acctId)
-                return sum + (state?.sessionPnL ?? 0) + (state?.unrealizedPnL ?? 0)
+            let aggregated = runningAccountIds.reduce((0.0, 0.0, 0)) { acc, acctId in
+                let pnl = livePnL(accountId: acctId)
+                return (acc.0 + pnl.realized, acc.1 + pnl.unrealized, acc.2 + pnl.tradeCount)
             }
-            let aggregatedTrades = runningAccountIds.reduce(0) { sum, acctId in
-                sum + (botRunner.runState(for: bot, accountId: acctId)?.sessionTradeCount ?? 0)
-            }
-            let aggregatedUnrealized = runningAccountIds.reduce(0.0) { sum, acctId in
-                sum + (botRunner.runState(for: bot, accountId: acctId)?.unrealizedPnL ?? 0)
-            }
+            let aggregatedPnL = aggregated.0 + aggregated.1
+            let aggregatedTrades = aggregated.2
+            let aggregatedUnrealized = aggregated.1
             VStack(spacing: 8) {
                 HStack(spacing: 0) {
                     pnlTile(
@@ -590,6 +677,41 @@ struct BotDetailView: View {
                         Text(formatPnL(aggregatedUnrealized))
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.orange)
+                    }
+                }
+
+                // Reset menu
+                if !isRunning || aggregatedPnL != 0 || bot.lifetimePnL != 0 {
+                    Divider()
+                    Menu {
+                        if isRunning {
+                            Button(role: .destructive) {
+                                resetPnLTarget = .session
+                                showResetPnLConfirmation = true
+                            } label: {
+                                Label("Reset Session", systemImage: "arrow.counterclockwise")
+                            }
+                        }
+                        Button(role: .destructive) {
+                            resetPnLTarget = .lifetime
+                            showResetPnLConfirmation = true
+                        } label: {
+                            Label("Reset Lifetime", systemImage: "arrow.counterclockwise.circle")
+                        }
+                        Button(role: .destructive) {
+                            resetPnLTarget = .all
+                            showResetPnLConfirmation = true
+                        } label: {
+                            Label("Reset All Stats", systemImage: "trash.circle")
+                        }
+                    } label: {
+                        HStack {
+                            Spacer()
+                            Label("Reset Stats", systemImage: "arrow.counterclockwise")
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(.red.opacity(0.8))
+                            Spacer()
+                        }
                     }
                 }
             }

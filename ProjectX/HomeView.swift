@@ -515,13 +515,13 @@ struct HomeView: View {
                         VStack(alignment: .leading, spacing: 4) {
                             HStack {
                                 BotAvatar(botId: bot.id, size: 24)
-                                    .overlay(alignment: .bottomTrailing) {
+                                    .overlay(alignment: .topLeading) {
                                         if running {
                                             Circle()
                                                 .fill(.green)
                                                 .frame(width: 8, height: 8)
                                                 .background(Circle().fill(.background).padding(-1))
-                                                .offset(x: 2, y: 2)
+                                                .offset(x: -3, y: -3)
                                         }
                                     }
 
@@ -561,6 +561,48 @@ struct HomeView: View {
                                 }
                             }
 
+                            // Live price + position info (only when position is open)
+                            if running,
+                               let quote = realtime.contractQuotes[bot.contractId],
+                               let pos = realtime.livePositions.first(where: {
+                                   $0.accountId == activeAccountId && $0.contractId == bot.contractId
+                               }) {
+                                let tick = botRunner.contractTickInfo[bot.contractId]
+
+                                HStack(spacing: 4) {
+                                    Text(pos.isLong ? "LONG" : "SHORT")
+                                        .font(.system(size: 9, weight: .bold))
+                                        .padding(.horizontal, 4).padding(.vertical, 1)
+                                        .background((pos.isLong ? Color.green : Color.red).opacity(0.15))
+                                        .foregroundStyle(pos.isLong ? .green : .red)
+                                        .clipShape(RoundedRectangle(cornerRadius: 3))
+                                    Text("@")
+                                        .font(.caption2)
+                                        .foregroundStyle(.tertiary)
+                                    Text(String(format: "%.2f", pos.averagePrice))
+                                        .font(.caption2.monospacedDigit())
+                                        .foregroundStyle(.tertiary)
+                                    Image(systemName: "arrow.right")
+                                        .font(.system(size: 7))
+                                        .foregroundStyle(.tertiary)
+                                    Text(String(format: "%.2f", quote.lastPrice))
+                                        .font(.caption.weight(.bold).monospacedDigit())
+                                        .foregroundStyle(quote.change >= 0 ? .green : .red)
+                                    if let tick, tick.tickSize > 0 {
+                                        let diff = quote.lastPrice - pos.averagePrice
+                                        let dir: Double = pos.isLong ? 1 : -1
+                                        let pnl = (diff / tick.tickSize) * tick.tickValue * dir
+                                        Text("uP&L")
+                                            .font(.system(size: 8))
+                                            .foregroundStyle(.tertiary)
+                                        Text(formatPnL(pnl))
+                                            .font(.caption2.weight(.bold).monospacedDigit())
+                                            .foregroundStyle(pnl >= 0 ? .green : .red)
+                                    }
+                                    Spacer()
+                                }
+                            }
+
                             // Conflict hint — shown on tap of disabled start button
                             if conflictHintBotId == bot.id, let conflictBot {
                                 Text("\"\(conflictBot)\" is already running on this contract")
@@ -575,25 +617,44 @@ struct HomeView: View {
 
                             // P&L line
                             HStack(spacing: 10) {
-                                // Session (only while running)
-                                if running, let state {
-                                    let totalSession = state.sessionPnL + state.unrealizedPnL
-                                    HStack(spacing: 3) {
-                                        Text("Session:")
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                        Text(formatPnL(totalSession))
-                                            .font(.caption.weight(.semibold))
-                                            .foregroundStyle(totalSession >= 0 ? .green : .red)
-                                        if state.unrealizedPnL != 0 {
-                                            Text("(\(formatPnL(state.unrealizedPnL)) open)")
-                                                .font(.caption2)
-                                                .foregroundStyle(.orange)
-                                        }
-                                        Text("(\(state.sessionTradeCount))")
-                                            .font(.caption2)
-                                            .foregroundStyle(.tertiary)
-                                    }
+                                // Session — always visible
+                                HStack(spacing: 3) {
+                                    let sessionValues: (realized: Double, unrealized: Double, trades: Int) = {
+                                        guard running, let state else { return (0, 0, 0) }
+                                        let unrealized: Double = {
+                                            if let quote = realtime.contractQuotes[bot.contractId],
+                                               let pos = realtime.livePositions.first(where: {
+                                                   $0.accountId == activeAccountId && $0.contractId == bot.contractId
+                                               }),
+                                               let tick = botRunner.contractTickInfo[bot.contractId] {
+                                                let priceDiff = quote.lastPrice - pos.averagePrice
+                                                let direction: Double = pos.isLong ? 1 : -1
+                                                return (priceDiff / tick.tickSize) * tick.tickValue * direction
+                                            }
+                                            return state.unrealizedPnL
+                                        }()
+                                        let realized: Double = {
+                                            if realtime.isUserConnected {
+                                                let matched = realtime.liveTrades.filter {
+                                                    state.placedOrderIds.contains($0.orderId) && !$0.voided && $0.profitAndLoss != nil
+                                                }
+                                                return matched.compactMap(\.profitAndLoss).reduce(0, +)
+                                            }
+                                            return state.sessionPnL
+                                        }()
+                                        return (realized, unrealized, state.sessionTradeCount)
+                                    }()
+                                    let totalSession = sessionValues.realized + sessionValues.unrealized
+
+                                    Text("Session:")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    Text(formatPnL(totalSession))
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(totalSession >= 0 ? .green : .red)
+                                    Text("(\(sessionValues.trades))")
+                                        .font(.caption2)
+                                        .foregroundStyle(.tertiary)
                                 }
 
                                 // Lifetime
@@ -635,7 +696,11 @@ struct HomeView: View {
                             }
                         }
                         .padding(10)
-                        .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: 8))
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(running ? Color.green.opacity(0.05) : Color.clear)
+                                .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: 8))
+                        )
                         .overlay(alignment: .topLeading) {
                             if editingBots {
                                 Button {

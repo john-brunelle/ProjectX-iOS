@@ -112,7 +112,7 @@ class BotRunner {
 
     /// Cached tick size/value per contractId for unrealized P&L calculation.
     struct TickInfo { let tickSize: Double; let tickValue: Double }
-    private var contractTickInfo: [String: TickInfo] = [:]
+    private(set) var contractTickInfo: [String: TickInfo] = [:]
 
     /// Injected by DashboardView before any restore/start calls.
     var modelContext: ModelContext?
@@ -205,6 +205,33 @@ class BotRunner {
             updated.task = nil
             log(key: key, type: .info, message: "Bot stopped", state: &updated)
             runStates[key] = updated
+        }
+
+        // Close positions and/or cancel orders on this contract if enabled
+        let closePositions = UserDefaults.standard.bool(forKey: "pref_closePositionsOnStop")
+        let cancelOrders = UserDefaults.standard.bool(forKey: "pref_cancelOrdersOnStop")
+        if closePositions || cancelOrders {
+            let accountId = key.accountId
+            let contractId = bot.contractId
+            Task {
+                if closePositions {
+                    let closed = await service.closePosition(accountId: accountId, contractId: contractId)
+                    if closed {
+                        logToState(key: key, type: .info, message: "Closed position on \(bot.contractName)")
+                    }
+                }
+                if cancelOrders {
+                    let openOrders = await MainActor.run {
+                        realtime.liveOrders.filter { $0.accountId == accountId && $0.contractId == contractId && $0.status == 1 }
+                    }
+                    for order in openOrders {
+                        _ = await service.cancelOrder(accountId: accountId, orderId: order.id)
+                    }
+                    if !openOrders.isEmpty {
+                        logToState(key: key, type: .info, message: "Cancelled \(openOrders.count) order(s) on \(bot.contractName)")
+                    }
+                }
+            }
         }
 
         runningBotInfo.removeValue(forKey: key)
@@ -340,6 +367,18 @@ class BotRunner {
         runStates[BotRunKey(botId: bot.id, accountId: accountId)]
     }
 
+    /// Resets session P&L and trade count to zero for a running bot instance.
+    func resetSessionPnL(for bot: BotConfig, accountId: Int) {
+        let key = BotRunKey(botId: bot.id, accountId: accountId)
+        guard runStates[key] != nil else { return }
+        runStates[key]?.sessionPnL = 0
+        runStates[key]?.unrealizedPnL = 0
+        runStates[key]?.sessionTradeCount = 0
+        runStates[key]?.placedOrderIds.removeAll()
+        runStates[key]?.customTags.removeAll()
+        flushSessionPnL(key: key, pnl: 0, tradeCount: 0)
+    }
+
     /// Clears the in-memory log and deletes all persisted records for a bot instance.
     func clearLog(for botId: UUID, accountId: Int) {
         let key = BotRunKey(botId: botId, accountId: accountId)
@@ -381,6 +420,11 @@ class BotRunner {
         runStates[key]?.task?.cancel()
 
         runningBotInfo[key] = RunningBotInfo(contractId: bot.contractId, name: bot.name)
+
+        // Subscribe to live quotes for this contract via SignalR Market Hub
+        Task { @MainActor in
+            realtime.connectMarketHub(contractId: bot.contractId)
+        }
 
         // Fetch tick info for unrealized P&L (if not already cached)
         if contractTickInfo[bot.contractId] == nil {

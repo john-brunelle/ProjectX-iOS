@@ -20,6 +20,10 @@ struct PreferencesView: View {
     @AppStorage("pref_defaultQuantity") private var defaultQuantity = 1
     @AppStorage("pref_autoRestoreBots") private var autoRestoreBots = true
 
+    // MARK: - Bot Stop Behavior
+    @AppStorage("pref_closePositionsOnStop") private var closePositionsOnStop = false
+    @AppStorage("pref_cancelOrdersOnStop") private var cancelOrdersOnStop = false
+
     // MARK: - Rate Limiter
     @AppStorage("pref_enableRateLimiter") private var enableRateLimiter = true
 
@@ -91,6 +95,16 @@ struct PreferencesView: View {
                     Text("Bot Defaults")
                 } footer: {
                     Text("Default values used when creating new bots. Auto-restore resumes running bots after an app restart.")
+                }
+
+                // ── Bot Stop Behavior ──────────────────
+                Section {
+                    Toggle("Close Positions on Bot Stop", isOn: $closePositionsOnStop)
+                    Toggle("Cancel Orders on Bot Stop", isOn: $cancelOrdersOnStop)
+                } header: {
+                    Text("Bot Stop Behavior")
+                } footer: {
+                    Text("When enabled, stopping a bot will automatically close any open positions and/or cancel pending orders on that contract.")
                 }
 
                 // ── Notifications ────────────────────
