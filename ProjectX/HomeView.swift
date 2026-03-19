@@ -74,6 +74,13 @@ struct HomeView: View {
             .refreshable {
                 await realtime.refreshHomeData()
             }
+            .task {
+                // Safety net: periodic REST refresh in case SignalR misses updates
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(60))
+                    await realtime.refreshHomeData()
+                }
+            }
             .toolbar {
                 if botRunner.runningCount > 0 {
                     ToolbarItem(placement: .navigationBarTrailing) {
@@ -733,7 +740,7 @@ struct HomeView: View {
             if let q = realtime.currentQuote {
                 VStack(spacing: 6) {
                     HStack {
-                        Text(q.symbolName)
+                        Text(q.displayName)
                             .font(.caption.weight(.medium))
                         Spacer()
                         Text(String(format: "%.2f", q.lastPrice))

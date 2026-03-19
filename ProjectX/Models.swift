@@ -328,7 +328,7 @@ struct TradeSearchResponse: Codable {
 struct Quote: Identifiable, Codable {
     var id: String { symbol }
     let symbol: String
-    let symbolName: String
+    let symbolName: String?
     let lastPrice: Double
     let bestBid: Double
     let bestAsk: Double
@@ -338,8 +338,11 @@ struct Quote: Identifiable, Codable {
     let high: Double
     let low: Double
     let volume: Double
-    let lastUpdated: String
-    let timestamp: String
+    let lastUpdated: String?
+    let timestamp: String?
+
+    /// Display name with fallback to symbol
+    var displayName: String { symbolName ?? symbol }
 }
 
 struct MarketTradePayload: Codable {

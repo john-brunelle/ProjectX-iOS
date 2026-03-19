@@ -78,15 +78,15 @@ struct DashboardView: View {
             // Restart any bots that were running before a cold start/kill
             botRunner.restoreRunningBots(allBots)
         }
-        .onChange(of: service.activeAccount) { _, newAccount in
+        .onChange(of: service.activeAccount?.id) { oldId, newId in
+            guard let newId, newId != oldId else { return }
             NetworkLogger.shared.log(NetworkLogger.Entry(
                 timestamp: Date(), source: .signalR, method: "DashboardView.onChange(activeAccount)",
                 path: "lifecycle", statusCode: nil, duration: nil,
-                requestBody: "newAccountId=\(newAccount?.id.description ?? "nil")",
+                requestBody: "newAccountId=\(newId)",
                 responseBody: nil, error: nil
             ))
-            guard let account = newAccount else { return }
-            realtime.switchAccount(to: account.id)
+            realtime.switchAccount(to: newId)
         }
         .onDisappear {
             NetworkLogger.shared.log(NetworkLogger.Entry(

@@ -93,13 +93,16 @@ struct PojectXApp: App {
             let valid = await service.validateAndRefreshToken()
             guard valid else { return }
 
-            // Reconnect SignalR if needed — the hub's auto-reconnect
-            // handles the connection itself, but switching account
-            // forces a fresh subscribe for positions/orders/quotes
-            realtime.switchAccount(to: accountId)
+            // Only reconnect User Hub if it's actually disconnected.
+            // Don't tear down a healthy connection — that clears all live data.
+            if !realtime.isUserConnected {
+                realtime.switchAccount(to: accountId)
+            } else {
+                // Connection is healthy — just refresh data via REST
+                await realtime.refreshHomeData()
+            }
 
-            // Market Hub: auto-reconnect handles recovery.
-            // Only force reconnect if it's fully dead (marketConnection == nil).
+            // Market Hub: only force reconnect if fully dead
             if !realtime.isMarketConnected && !realtime.subscribedContractIds.isEmpty {
                 let contractIds = realtime.subscribedContractIds
                 realtime.disconnectMarket()

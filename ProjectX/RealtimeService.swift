@@ -178,17 +178,31 @@ class RealtimeService {
                                                                           startTimestamp: Self.sessionStart())
         let (_, orders, positions, trades) = await (acctRefresh, fetchedOrders, fetchedPositions, fetchedTrades)
 
-        liveOrders    = orders
-        livePositions = positions
-        liveTrades    = trades
+        // Only overwrite if we got data — don't clear existing data with empty results
+        // (can happen if REST call fails or races with fetchInitialUserData)
+        if !positions.isEmpty || livePositions.isEmpty {
+            livePositions = positions
+        }
+        if !orders.isEmpty || liveOrders.isEmpty {
+            liveOrders = orders
+        }
+        if !trades.isEmpty || liveTrades.isEmpty {
+            liveTrades = trades
+        }
     }
 
     /// Called by BotRunner on each poll to keep data fresh via REST,
     /// independent of SignalR connection status.
     func updateFromREST(positions: [Position], orders: [Order], trades: [Trade]) {
-        livePositions = positions
-        liveOrders    = orders
-        liveTrades    = Array(trades.prefix(200))
+        if !positions.isEmpty || livePositions.isEmpty {
+            livePositions = positions
+        }
+        if !orders.isEmpty || liveOrders.isEmpty {
+            liveOrders = orders
+        }
+        if !trades.isEmpty || liveTrades.isEmpty {
+            liveTrades = Array(trades.prefix(200))
+        }
         if !initialDataLoaded { initialDataLoaded = true }
     }
 
@@ -258,13 +272,11 @@ class RealtimeService {
                 } else {
                     self.liveOrders.insert(order, at: 0)
                 }
-                // Notify on order fill (status 2 = Filled)
                 if order.status == 2 {
                     NotificationService.shared.notifyOrderFilled(
                         orderId: order.id, side: order.sideLabel,
                         size: order.size, contractId: order.contractId)
                 }
-
                 NetworkLogger.shared.log(NetworkLogger.Entry(
                     timestamp: Date(), source: .signalR, method: "GatewayUserOrder",
                     path: "UserHub", statusCode: nil, duration: nil,
@@ -292,7 +304,6 @@ class RealtimeService {
             )
             Task { @MainActor in
                 if size == 0 {
-                    // Position closed — remove it
                     self.livePositions.removeAll { $0.id == id }
                 } else if let idx = self.livePositions.firstIndex(where: { $0.id == id }) {
                     self.livePositions[idx] = position
@@ -331,7 +342,6 @@ class RealtimeService {
             )
             Task { @MainActor in
                 self.liveTrades.insert(trade, at: 0)
-                // Keep last 200 trades in memory
                 if self.liveTrades.count > 200 {
                     self.liveTrades = Array(self.liveTrades.prefix(200))
                 }

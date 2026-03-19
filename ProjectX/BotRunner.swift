@@ -499,18 +499,15 @@ class BotRunner {
     private func pollOnce(bot: BotConfig, accountId: Int) async {
         let key = BotRunKey(botId: bot.id, accountId: accountId)
 
-        // Prefer SignalR live data; fall back to REST only when User Hub is disconnected.
-        let userConnected = await MainActor.run { realtime.isUserConnected }
-        if !userConnected {
-            async let freshPositions = service.searchOpenPositions(accountId: accountId)
-            async let freshOrders    = service.searchOpenOrders(accountId: accountId)
-            async let freshTrades    = service.searchTrades(
-                accountId: accountId, startTimestamp: RealtimeService.sessionStart())
+        // REST refresh on every poll ensures data accuracy.
+        // SignalR provides faster intermediate updates between polls.
+        async let freshPositions = service.searchOpenPositions(accountId: accountId)
+        async let freshOrders    = service.searchOpenOrders(accountId: accountId)
+        async let freshTrades    = service.searchTrades(
+            accountId: accountId, startTimestamp: RealtimeService.sessionStart())
 
-            let (positions, orders, trades) = await (freshPositions, freshOrders, freshTrades)
-            realtime.updateFromREST(positions: positions, orders: orders, trades: trades)
-            logToState(key: key, type: .info, message: "Data source: REST fallback (SignalR disconnected)")
-        }
+        let (positions, orders, trades) = await (freshPositions, freshOrders, freshTrades)
+        realtime.updateFromREST(positions: positions, orders: orders, trades: trades)
 
         // Fetch bars — use a shorter window to ensure we get the most recent bars.
         // For indicators we need enough history, but the last bar must be current.
