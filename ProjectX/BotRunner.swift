@@ -432,24 +432,17 @@ class BotRunner {
     private func pollOnce(bot: BotConfig, accountId: Int) async {
         let key = BotRunKey(botId: bot.id, accountId: accountId)
 
-        // Refresh positions, orders, and trades via REST on every poll.
-        // This ensures accurate data even when SignalR is disconnected.
-        async let freshPositions = service.searchOpenPositions(accountId: accountId)
-        async let freshOrders    = service.searchOpenOrders(accountId: accountId)
-        async let freshTrades    = service.searchTrades(
-            accountId: accountId, startTimestamp: RealtimeService.sessionStart())
+        // Prefer SignalR live data; fall back to REST only when User Hub is disconnected.
+        let userConnected = await MainActor.run { realtime.isUserConnected }
+        if !userConnected {
+            async let freshPositions = service.searchOpenPositions(accountId: accountId)
+            async let freshOrders    = service.searchOpenOrders(accountId: accountId)
+            async let freshTrades    = service.searchTrades(
+                accountId: accountId, startTimestamp: RealtimeService.sessionStart())
 
-        let (positions, orders, trades) = await (freshPositions, freshOrders, freshTrades)
-        realtime.updateFromREST(positions: positions, orders: orders, trades: trades)
-
-        // Debug: log what the REST API returned for positions on this contract
-        let botPositions = positions.filter { $0.contractId == bot.contractId }
-        for p in botPositions {
-            logToState(key: key, type: .info,
-                       message: "REST pos: id=\(p.id) \(p.isLong ? "LONG" : "SHORT") avg=\(p.averagePrice) size=\(p.size)")
-        }
-        if botPositions.isEmpty {
-            logToState(key: key, type: .info, message: "REST: no open positions on \(bot.contractId)")
+            let (positions, orders, trades) = await (freshPositions, freshOrders, freshTrades)
+            realtime.updateFromREST(positions: positions, orders: orders, trades: trades)
+            logToState(key: key, type: .info, message: "Data source: REST fallback (SignalR disconnected)")
         }
 
         // Fetch bars — use a shorter window to ensure we get the most recent bars.
