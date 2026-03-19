@@ -25,7 +25,7 @@ struct LiveQuoteView: View {
                         .padding(.horizontal)
 
                     // ── Quote card ────────────
-                    if let quote = realtime.currentQuote {
+                    if let quote = realtime.contractQuotes[contract.id] {
                         QuoteCard(quote: quote)
                             .padding(.horizontal)
                     } else {
@@ -52,14 +52,11 @@ struct LiveQuoteView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") {
-                        realtime.disconnectMarket()
-                        dismiss()
-                    }
+                    Button("Done") { dismiss() }
                 }
             }
-            .onAppear {
-                realtime.connectMarketHub(contractId: contract.id)
+            .onDisappear {
+                realtime.disconnectMarket()
             }
         }
     }

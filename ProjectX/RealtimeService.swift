@@ -22,8 +22,8 @@ class RealtimeService {
     static let shared = RealtimeService()
 
     // ── Hub URLs ──────────────────────────────
-    private let userHubURL   = "https://rtc.thefuturesdesk.projectx.com/hubs/user"
-    private let marketHubURL = "https://rtc.thefuturesdesk.projectx.com/hubs/market"
+    private let userHubURL   = "https://rtc.topstepx.com/hubs/user"
+    private let marketHubURL = "https://rtc.topstepx.com/hubs/market"
 
     // ── Connections ───────────────────────────
     private var userConnection:   HubConnection?
@@ -44,11 +44,17 @@ class RealtimeService {
     var initialDataLoaded = false
 
     // ── Observable state — Market Hub ─────────
-    var currentQuote:   Quote?     = nil
+    var contractQuotes: [String: Quote] = [:]
     var marketTrades:   [MarketTrade] = []
     var domEntries:     [DOMEntry]    = []
 
+    /// Backward-compatible accessor for views that only show one quote.
+    var currentQuote: Quote? { contractQuotes.values.first }
+
     private var subscribedAccountId:  Int?
+    private(set) var subscribedContractIds: Set<String> = []
+
+    /// The most recently subscribed contract (for foreground-resume reconnection).
     private(set) var subscribedContractId: String?
 
     // ─────────────────────────────────────────
@@ -347,23 +353,24 @@ class RealtimeService {
     func connectMarketHub(contractId: String) {
         guard let token = ProjectXService.shared.sessionToken else { return }
 
-        // Unsubscribe previous contract if any
-        if let prev = subscribedContractId, prev != contractId {
-            unsubscribeMarketHub(contractId: prev)
-        }
+        subscribedContractIds.insert(contractId)
         subscribedContractId = contractId
 
         if marketConnection == nil {
             let url = URL(string: "\(marketHubURL)?access_token=\(token)")!
+
+            NetworkLogger.shared.log(NetworkLogger.Entry(
+                timestamp: Date(), source: .signalR, method: "connectMarketHub",
+                path: "MarketHub", statusCode: nil, duration: nil,
+                requestBody: "contractId=\(contractId)", responseBody: "attempting...", error: nil
+            ))
 
             marketDelegate = HubDelegate(
                 hubName: "MarketHub",
                 onOpen: { [weak self] _ in
                     Task { @MainActor in
                         self?.isMarketConnected = true
-                        if let cid = self?.subscribedContractId {
-                            self?.subscribeMarketHub(contractId: cid)
-                        }
+                        self?.resubscribeAllMarketContracts()
                     }
                 },
                 onClose: { [weak self] _ in
@@ -372,9 +379,7 @@ class RealtimeService {
                 onReconnect: { [weak self] in
                     Task { @MainActor in
                         self?.isMarketConnected = true
-                        if let cid = self?.subscribedContractId {
-                            self?.subscribeMarketHub(contractId: cid)
-                        }
+                        self?.resubscribeAllMarketContracts()
                     }
                 }
             )
@@ -392,9 +397,7 @@ class RealtimeService {
             marketConnection?.on(method: "connected") { [weak self] in
                 Task { @MainActor in
                     self?.isMarketConnected = true
-                    if let cid = self?.subscribedContractId {
-                        self?.subscribeMarketHub(contractId: cid)
-                    }
+                    self?.resubscribeAllMarketContracts()
                 }
             }
 
@@ -410,65 +413,57 @@ class RealtimeService {
         marketConnection?.invoke(method: "SubscribeContractMarketDepth", contractId) { _ in }
     }
 
+    /// Re-subscribe all tracked contracts after a reconnection.
+    private func resubscribeAllMarketContracts() {
+        for cid in subscribedContractIds {
+            subscribeMarketHub(contractId: cid)
+        }
+    }
+
     private func unsubscribeMarketHub(contractId: String) {
         marketConnection?.invoke(method: "UnsubscribeContractQuotes",      contractId) { _ in }
         marketConnection?.invoke(method: "UnsubscribeContractTrades",      contractId) { _ in }
         marketConnection?.invoke(method: "UnsubscribeContractMarketDepth", contractId) { _ in }
-        currentQuote  = nil
+        subscribedContractIds.remove(contractId)
+        contractQuotes.removeValue(forKey: contractId)
         marketTrades  = []
         domEntries    = []
     }
 
+    /// Unsubscribe a single contract without tearing down the whole Market Hub.
+    func disconnectMarketContract(contractId: String) {
+        unsubscribeMarketHub(contractId: contractId)
+        if subscribedContractIds.isEmpty {
+            subscribedContractId = nil
+        }
+    }
+
     private func registerMarketHandlers() {
         // ── Live Quote ────────────────────────
+        // Server sends: ["contractId", { quote object }]
         marketConnection?.on(method: "GatewayQuote", callback: { [weak self] (data: ArgumentExtractor) throws in
             guard let self else { return }
-            let _            = try data.getArgument(type: String.self) // contractId
-            let symbol       = try data.getArgument(type: String.self)
-            let symbolName   = try data.getArgument(type: String.self)
-            let lastPrice    = try data.getArgument(type: Double.self)
-            let bestBid      = try data.getArgument(type: Double.self)
-            let bestAsk      = try data.getArgument(type: Double.self)
-            let change       = try data.getArgument(type: Double.self)
-            let changePct    = try data.getArgument(type: Double.self)
-            let open         = try data.getArgument(type: Double.self)
-            let high         = try data.getArgument(type: Double.self)
-            let low          = try data.getArgument(type: Double.self)
-            let volume       = try data.getArgument(type: Double.self)
-            let lastUpdated  = try data.getArgument(type: String.self)
-            let timestamp    = try data.getArgument(type: String.self)
-            let quote = Quote(
-                symbol: symbol, symbolName: symbolName,
-                lastPrice: lastPrice, bestBid: bestBid, bestAsk: bestAsk,
-                change: change, changePercent: changePct,
-                open: open, high: high, low: low, volume: volume,
-                lastUpdated: lastUpdated, timestamp: timestamp
-            )
+            let contractId = try data.getArgument(type: String.self)
+            let quote      = try data.getArgument(type: Quote.self)
             Task { @MainActor in
-                self.currentQuote = quote
+                self.contractQuotes[contractId] = quote
                 NetworkLogger.shared.log(NetworkLogger.Entry(
                     timestamp: Date(), source: .signalR, method: "GatewayQuote",
                     path: "MarketHub", statusCode: nil, duration: nil,
                     requestBody: nil,
-                    responseBody: "\(symbol) last=\(lastPrice) bid=\(bestBid) ask=\(bestAsk) vol=\(volume)",
+                    responseBody: "\(quote.symbol) last=\(quote.lastPrice) bid=\(quote.bestBid) ask=\(quote.bestAsk) vol=\(quote.volume)",
                     error: nil
                 ))
             }
         })
 
         // ── Market Trades ─────────────────────
+        // Server sends: ["contractId", { trade object }]
         marketConnection?.on(method: "GatewayTrade", callback: { [weak self] (data: ArgumentExtractor) throws in
             guard let self else { return }
-            let _         = try data.getArgument(type: String.self) // contractId
-            let symbolId  = try data.getArgument(type: String.self)
-            let price     = try data.getArgument(type: Double.self)
-            let timestamp = try data.getArgument(type: String.self)
-            let type      = try data.getArgument(type: Int.self)
-            let volume    = try data.getArgument(type: Int.self)
-            let trade = MarketTrade(
-                symbolId: symbolId, price: price,
-                timestamp: timestamp, type: type, volume: volume
-            )
+            let _       = try data.getArgument(type: String.self) // contractId
+            let payload = try data.getArgument(type: MarketTradePayload.self)
+            let trade   = MarketTrade(from: payload)
             Task { @MainActor in
                 self.marketTrades.insert(trade, at: 0)
                 if self.marketTrades.count > 100 {
@@ -478,46 +473,38 @@ class RealtimeService {
                     timestamp: Date(), source: .signalR, method: "GatewayTrade",
                     path: "MarketHub", statusCode: nil, duration: nil,
                     requestBody: nil,
-                    responseBody: "\(symbolId) price=\(price) vol=\(volume) type=\(type)",
+                    responseBody: "\(payload.symbolId) price=\(payload.price) vol=\(payload.volume) type=\(payload.type)",
                     error: nil
                 ))
             }
         })
 
         // ── DOM / Depth ───────────────────────
+        // Server sends: ["contractId", [array of depth entries]]
         marketConnection?.on(method: "GatewayDepth", callback: { [weak self] (data: ArgumentExtractor) throws in
             guard let self else { return }
-            let _             = try data.getArgument(type: String.self) // contractId
-            let timestamp     = try data.getArgument(type: String.self)
-            let type          = try data.getArgument(type: Int.self)
-            let price         = try data.getArgument(type: Double.self)
-            let volume        = try data.getArgument(type: Int.self)
-            let currentVolume = try data.getArgument(type: Int.self)
+            let _       = try data.getArgument(type: String.self) // contractId
+            let entries = try data.getArgument(type: [DepthEntry].self)
 
-            // Handle DOM reset
-            if type == DomType.reset.rawValue {
-                Task { @MainActor in self.domEntries = [] }
-                return
-            }
-
-            let entry = DOMEntry(
-                timestamp: timestamp, type: type,
-                price: price, volume: volume, currentVolume: currentVolume
-            )
             Task { @MainActor in
-                self.domEntries.removeAll { $0.price == price && $0.type == type }
-                if volume > 0 { self.domEntries.append(entry) }
+                // Check for DOM reset
+                if entries.count == 1 && entries[0].type == DomType.reset.rawValue {
+                    self.domEntries = []
+                    return
+                }
+
+                for entry in entries {
+                    let domEntry = DOMEntry(
+                        timestamp: entry.timestamp, type: entry.type,
+                        price: entry.price, volume: entry.volume, currentVolume: entry.currentVolume
+                    )
+                    self.domEntries.removeAll { $0.price == entry.price && $0.type == entry.type }
+                    if entry.volume > 0 { self.domEntries.append(domEntry) }
+                }
                 self.domEntries.sort { $0.price > $1.price }
                 if self.domEntries.count > 40 {
                     self.domEntries = Array(self.domEntries.prefix(40))
                 }
-                NetworkLogger.shared.log(NetworkLogger.Entry(
-                    timestamp: Date(), source: .signalR, method: "GatewayDepth",
-                    path: "MarketHub", statusCode: nil, duration: nil,
-                    requestBody: nil,
-                    responseBody: "type=\(type) price=\(price) vol=\(volume) currVol=\(currentVolume)",
-                    error: nil
-                ))
             }
         })
     }
@@ -533,9 +520,11 @@ class RealtimeService {
             requestBody: nil, responseBody: "stopping all connections", error: nil
         ))
         unsubscribeUserHub()
-        if let cid = subscribedContractId {
+        for cid in subscribedContractIds {
             unsubscribeMarketHub(contractId: cid)
         }
+        subscribedContractIds.removeAll()
+        subscribedContractId = nil
         userConnection?.stop()
         marketConnection?.stop()
         userConnection   = nil
@@ -545,9 +534,11 @@ class RealtimeService {
     }
 
     func disconnectMarket() {
-        if let cid = subscribedContractId {
+        for cid in subscribedContractIds {
             unsubscribeMarketHub(contractId: cid)
         }
+        subscribedContractIds.removeAll()
+        subscribedContractId = nil
         marketConnection?.stop()
         marketConnection  = nil
         isMarketConnected = false
@@ -610,7 +601,7 @@ class HubDelegate: HubConnectionDelegate {
         NetworkLogger.shared.log(NetworkLogger.Entry(
             timestamp: Date(), source: .signalR, method: "connectionDidFailToOpen",
             path: hubName, statusCode: nil, duration: nil,
-            requestBody: nil, responseBody: nil, error: error.localizedDescription
+            requestBody: nil, responseBody: nil, error: String(describing: error)
         ))
     }
 
@@ -619,7 +610,7 @@ class HubDelegate: HubConnectionDelegate {
             timestamp: Date(), source: .signalR, method: "connectionDidClose",
             path: hubName, statusCode: nil, duration: nil,
             requestBody: nil, responseBody: nil,
-            error: error.map { $0.localizedDescription }
+            error: error.map { String(describing: $0) }
         ))
         onCloseHandler(error)
     }
@@ -628,7 +619,7 @@ class HubDelegate: HubConnectionDelegate {
         NetworkLogger.shared.log(NetworkLogger.Entry(
             timestamp: Date(), source: .signalR, method: "connectionWillReconnect",
             path: hubName, statusCode: nil, duration: nil,
-            requestBody: nil, responseBody: nil, error: error.localizedDescription
+            requestBody: nil, responseBody: nil, error: String(describing: error)
         ))
     }
 

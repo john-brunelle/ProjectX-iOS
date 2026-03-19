@@ -165,6 +165,11 @@ class BotRunner {
             }
         }
 
+        // Subscribe to live quotes for this contract via SignalR Market Hub
+        Task { @MainActor in
+            realtime.connectMarketHub(contractId: bot.contractId)
+        }
+
         var state = BotRunState()
         log(key: key, type: .info, message: "Bot started on account \(accountId)", state: &state)
 
@@ -205,6 +210,14 @@ class BotRunner {
         runningBotInfo.removeValue(forKey: key)
         removeRunRecord(key: key)
         bot.updatedAt = Date()
+
+        // Unsubscribe Market Hub if no other running bot uses this contract
+        let contractStillInUse = runningBotInfo.values.contains { $0.contractId == bot.contractId }
+        if !contractStillInUse {
+            Task { @MainActor in
+                realtime.disconnectMarketContract(contractId: bot.contractId)
+            }
+        }
     }
 
     func stopAll() {
@@ -463,19 +476,28 @@ class BotRunner {
             state.lastSignal = signal
         }
 
-        // Fetch current price via 1-second bars for near real-time unrealized P&L
-        let now = Date()
-        let priceBars = await service.retrieveBars(
-            contractId: bot.contractId,
-            live: false,
-            startTime: now.addingTimeInterval(-10),
-            endTime: now,
-            unit: .second,
-            unitNumber: 1,
-            limit: 10,
-            includePartialBar: true
-        )
-        let lastPrice = priceBars.last?.c ?? bars.last?.c ?? 0
+        // Get current price: prefer SignalR live quote, fall back to 1-second bars
+        let signalrPrice = await MainActor.run { realtime.contractQuotes[bot.contractId]?.lastPrice }
+        let lastPrice: Double
+        if let sqp = signalrPrice, sqp > 0 {
+            lastPrice = sqp
+            logToState(key: key, type: .info, message: "Price source: SignalR (\(String(format: "%.2f", sqp)))")
+        } else {
+            let now = Date()
+            let priceBars = await service.retrieveBars(
+                contractId: bot.contractId,
+                live: false,
+                startTime: now.addingTimeInterval(-10),
+                endTime: now,
+                unit: .second,
+                unitNumber: 1,
+                limit: 10,
+                includePartialBar: true
+            )
+            let fallback = priceBars.last?.c ?? bars.last?.c ?? 0
+            lastPrice = fallback
+            logToState(key: key, type: .info, message: "Price source: REST fallback (\(String(format: "%.2f", fallback)))")
+        }
         updateSessionPnL(key: key, bot: bot, lastPrice: lastPrice)
 
         switch signal {

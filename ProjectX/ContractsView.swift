@@ -62,6 +62,7 @@ struct ContractsView: View {
             .sheet(item: $selectedContract) { contract in
                 ContractDetailView(contract: contract)
                     .environment(service)
+                    .environment(RealtimeService.shared)
             }
         }
     }
@@ -107,6 +108,7 @@ struct ContractRow: View {
 
 struct ContractDetailView: View {
     @Environment(ProjectXService.self) var service
+    @Environment(RealtimeService.self) var realtime
     @Environment(\.dismiss) var dismiss
 
     let contract: Contract
@@ -142,6 +144,7 @@ struct ContractDetailView: View {
                     }
                 }
                     Button {
+                        realtime.connectMarketHub(contractId: contract.id)
                         showLiveQuote = true
                     } label: {
                         Label("View Live Quote", systemImage: "dot.radiowaves.left.and.right")
@@ -159,6 +162,11 @@ struct ContractDetailView: View {
             }
             .sheet(isPresented: $showBars) {
                 BarsView(contract: contract).environment(service)
+            }
+            .sheet(isPresented: $showLiveQuote) {
+                LiveQuoteView(contract: contract)
+                    .environment(service)
+                    .environment(realtime)
             }
         }
     }

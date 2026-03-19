@@ -85,6 +85,16 @@ struct PojectXApp: App {
             // forces a fresh subscribe for positions/orders/quotes
             realtime.switchAccount(to: accountId)
 
+            // Reconnect Market Hub with fresh token (stale JWT in URL causes drops).
+            // Capture IDs before disconnect clears them.
+            let marketContractIds = realtime.subscribedContractIds
+            if !marketContractIds.isEmpty {
+                realtime.disconnectMarket()
+                for contractId in marketContractIds {
+                    realtime.connectMarketHub(contractId: contractId)
+                }
+            }
+
             // Refresh account data
             await service.fetchAccounts()
         }

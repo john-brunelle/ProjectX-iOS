@@ -325,7 +325,7 @@ struct TradeSearchResponse: Codable {
 
 // ── Realtime / SignalR Models ─────────────────
 
-struct Quote: Identifiable {
+struct Quote: Identifiable, Codable {
     var id: String { symbol }
     let symbol: String
     let symbolName: String
@@ -342,6 +342,14 @@ struct Quote: Identifiable {
     let timestamp: String
 }
 
+struct MarketTradePayload: Codable {
+    let symbolId: String
+    let price: Double
+    let timestamp: String
+    let type: Int
+    let volume: Int
+}
+
 struct MarketTrade: Identifiable {
     let id = UUID()
     let symbolId: String
@@ -351,6 +359,30 @@ struct MarketTrade: Identifiable {
     let volume: Int
 
     var isBuy: Bool { type == 0 }
+
+    init(symbolId: String, price: Double, timestamp: String, type: Int, volume: Int) {
+        self.symbolId = symbolId
+        self.price = price
+        self.timestamp = timestamp
+        self.type = type
+        self.volume = volume
+    }
+
+    init(from payload: MarketTradePayload) {
+        self.symbolId = payload.symbolId
+        self.price = payload.price
+        self.timestamp = payload.timestamp
+        self.type = payload.type
+        self.volume = payload.volume
+    }
+}
+
+struct DepthEntry: Codable {
+    let price: Double
+    let volume: Int
+    let currentVolume: Int
+    let type: Int
+    let timestamp: String
 }
 
 struct DOMEntry: Identifiable {
