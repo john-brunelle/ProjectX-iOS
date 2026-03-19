@@ -323,6 +323,12 @@ struct TradeSearchResponse: Codable {
 }
 
 
+/// Envelope wrapper for user hub messages: {"action": Int, "data": T}
+struct GatewayEnvelope<T: Codable>: Codable {
+    let action: Int
+    let data: T
+}
+
 // ── Realtime / SignalR Models ─────────────────
 
 struct Quote: Identifiable, Codable {
@@ -343,6 +349,52 @@ struct Quote: Identifiable, Codable {
 
     /// Display name with fallback to symbol
     var displayName: String { symbolName ?? symbol }
+
+    /// Merge incoming quote with existing, preferring incoming non-zero values
+    static func merged(existing e: Quote, incoming i: Quote) -> Quote {
+        Quote(
+            symbol: i.symbol,
+            symbolName: i.symbolName ?? e.symbolName,
+            lastPrice: i.lastPrice != 0 ? i.lastPrice : e.lastPrice,
+            bestBid: i.bestBid != 0 ? i.bestBid : e.bestBid,
+            bestAsk: i.bestAsk != 0 ? i.bestAsk : e.bestAsk,
+            change: i.change != 0 ? i.change : e.change,
+            changePercent: i.changePercent != 0 ? i.changePercent : e.changePercent,
+            open: i.open != 0 ? i.open : e.open,
+            high: i.high != 0 ? i.high : e.high,
+            low: i.low != 0 ? i.low : e.low,
+            volume: i.volume != 0 ? i.volume : e.volume,
+            lastUpdated: i.lastUpdated ?? e.lastUpdated,
+            timestamp: i.timestamp ?? e.timestamp
+        )
+    }
+
+    init(symbol: String, symbolName: String?, lastPrice: Double, bestBid: Double,
+         bestAsk: Double, change: Double, changePercent: Double, open: Double,
+         high: Double, low: Double, volume: Double, lastUpdated: String?, timestamp: String?) {
+        self.symbol = symbol; self.symbolName = symbolName; self.lastPrice = lastPrice
+        self.bestBid = bestBid; self.bestAsk = bestAsk; self.change = change
+        self.changePercent = changePercent; self.open = open; self.high = high
+        self.low = low; self.volume = volume; self.lastUpdated = lastUpdated
+        self.timestamp = timestamp
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        symbol        = try c.decode(String.self, forKey: .symbol)
+        symbolName    = try c.decodeIfPresent(String.self, forKey: .symbolName)
+        lastPrice     = try c.decodeIfPresent(Double.self, forKey: .lastPrice) ?? 0
+        bestBid       = try c.decodeIfPresent(Double.self, forKey: .bestBid) ?? 0
+        bestAsk       = try c.decodeIfPresent(Double.self, forKey: .bestAsk) ?? 0
+        change        = try c.decodeIfPresent(Double.self, forKey: .change) ?? 0
+        changePercent = try c.decodeIfPresent(Double.self, forKey: .changePercent) ?? 0
+        open          = try c.decodeIfPresent(Double.self, forKey: .open) ?? 0
+        high          = try c.decodeIfPresent(Double.self, forKey: .high) ?? 0
+        low           = try c.decodeIfPresent(Double.self, forKey: .low) ?? 0
+        volume        = try c.decodeIfPresent(Double.self, forKey: .volume) ?? 0
+        lastUpdated   = try c.decodeIfPresent(String.self, forKey: .lastUpdated)
+        timestamp     = try c.decodeIfPresent(String.self, forKey: .timestamp)
+    }
 }
 
 struct MarketTradePayload: Codable {

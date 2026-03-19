@@ -219,55 +219,32 @@ class RealtimeService {
         // ── Account updates ───────────────────
         userConnection?.on(method: "GatewayUserAccount", callback: { [weak self] (data: ArgumentExtractor) throws in
             guard let self else { return }
-            let id        = try data.getArgument(type: Int.self)
-            let name      = try data.getArgument(type: String.self)
-            let balance   = try data.getArgument(type: Double.self)
-            let canTrade  = try data.getArgument(type: Bool.self)
-            let isVisible = try data.getArgument(type: Bool.self)
-            let updated = Account(id: id, name: name, balance: balance,
-                                  canTrade: canTrade, isVisible: isVisible, simulated: nil)
+            let envelope = try data.getArgument(type: GatewayEnvelope<Account>.self)
+            let account = envelope.data
             Task { @MainActor in
-                if let idx = self.liveAccounts.firstIndex(where: { $0.id == id }) {
-                    self.liveAccounts[idx] = updated
+                if let idx = self.liveAccounts.firstIndex(where: { $0.id == account.id }) {
+                    self.liveAccounts[idx] = account
                 } else {
-                    self.liveAccounts.append(updated)
+                    self.liveAccounts.append(account)
                 }
                 NetworkLogger.shared.log(NetworkLogger.Entry(
                     timestamp: Date(), source: .signalR, method: "GatewayUserAccount",
                     path: "UserHub", statusCode: nil, duration: nil,
                     requestBody: nil,
-                    responseBody: "id=\(id) name=\(name) bal=\(balance) canTrade=\(canTrade)",
+                    responseBody: "id=\(account.id) name=\(account.name) bal=\(account.balance) canTrade=\(account.canTrade)",
                     error: nil
                 ))
             }
         })
 
         // ── Order updates ─────────────────────
+        // Server sends: [{ order object }]
         userConnection?.on(method: "GatewayUserOrder", callback: { [weak self] (data: ArgumentExtractor) throws in
             guard let self else { return }
-            let id           = try data.getArgument(type: Int.self)
-            let accountId    = try data.getArgument(type: Int.self)
-            let contractId   = try data.getArgument(type: String.self)
-            let symbolId     = try? data.getArgument(type: String.self)
-            let creationTs   = try data.getArgument(type: String.self)
-            let updateTs     = try data.getArgument(type: String.self)
-            let status       = try data.getArgument(type: Int.self)
-            let type         = try data.getArgument(type: Int.self)
-            let side         = try data.getArgument(type: Int.self)
-            let size         = try data.getArgument(type: Int.self)
-            let order = Order(
-                id: id, accountId: accountId, contractId: contractId,
-                symbolId: symbolId, creationTimestamp: creationTs,
-                updateTimestamp: updateTs, status: status, type: type,
-                side: side, size: size,
-                limitPrice: try? data.getArgument(type: Double.self),
-                stopPrice:  try? data.getArgument(type: Double.self),
-                fillVolume: try? data.getArgument(type: Int.self),
-                filledPrice: try? data.getArgument(type: Double.self),
-                customTag:  try? data.getArgument(type: String.self)
-            )
+            let envelope = try data.getArgument(type: GatewayEnvelope<Order>.self)
+            let order = envelope.data
             Task { @MainActor in
-                if let idx = self.liveOrders.firstIndex(where: { $0.id == id }) {
+                if let idx = self.liveOrders.firstIndex(where: { $0.id == order.id }) {
                     self.liveOrders[idx] = order
                 } else {
                     self.liveOrders.insert(order, at: 0)
@@ -281,31 +258,22 @@ class RealtimeService {
                     timestamp: Date(), source: .signalR, method: "GatewayUserOrder",
                     path: "UserHub", statusCode: nil, duration: nil,
                     requestBody: nil,
-                    responseBody: "id=\(id) contract=\(contractId) side=\(side) size=\(size) status=\(status) type=\(type)",
+                    responseBody: "id=\(order.id) contract=\(order.contractId) side=\(order.side) size=\(order.size) status=\(order.status) type=\(order.type)",
                     error: nil
                 ))
             }
         })
 
         // ── Position updates ──────────────────
+        // Server sends: [{ position object }]
         userConnection?.on(method: "GatewayUserPosition", callback: { [weak self] (data: ArgumentExtractor) throws in
             guard let self else { return }
-            let id         = try data.getArgument(type: Int.self)
-            let accountId  = try data.getArgument(type: Int.self)
-            let contractId = try data.getArgument(type: String.self)
-            let creationTs = try data.getArgument(type: String.self)
-            let type       = try data.getArgument(type: Int.self)
-            let size       = try data.getArgument(type: Int.self)
-            let avgPrice   = try data.getArgument(type: Double.self)
-            let position = Position(
-                id: id, accountId: accountId, contractId: contractId,
-                creationTimestamp: creationTs, type: type,
-                size: size, averagePrice: avgPrice
-            )
+            let envelope = try data.getArgument(type: GatewayEnvelope<Position>.self)
+            let position = envelope.data
             Task { @MainActor in
-                if size == 0 {
-                    self.livePositions.removeAll { $0.id == id }
-                } else if let idx = self.livePositions.firstIndex(where: { $0.id == id }) {
+                if position.size == 0 {
+                    self.livePositions.removeAll { $0.id == position.id }
+                } else if let idx = self.livePositions.firstIndex(where: { $0.id == position.id }) {
                     self.livePositions[idx] = position
                 } else {
                     self.livePositions.append(position)
@@ -314,32 +282,18 @@ class RealtimeService {
                     timestamp: Date(), source: .signalR, method: "GatewayUserPosition",
                     path: "UserHub", statusCode: nil, duration: nil,
                     requestBody: nil,
-                    responseBody: "id=\(id) contract=\(contractId) type=\(type) size=\(size) avgPrice=\(avgPrice)",
+                    responseBody: "id=\(position.id) contract=\(position.contractId) type=\(position.type) size=\(position.size) avgPrice=\(position.averagePrice)",
                     error: nil
                 ))
             }
         })
 
         // ── Trade updates ─────────────────────
+        // Server sends: [{ trade object }]
         userConnection?.on(method: "GatewayUserTrade", callback: { [weak self] (data: ArgumentExtractor) throws in
             guard let self else { return }
-            let id         = try data.getArgument(type: Int.self)
-            let accountId  = try data.getArgument(type: Int.self)
-            let contractId = try data.getArgument(type: String.self)
-            let creationTs = try data.getArgument(type: String.self)
-            let price      = try data.getArgument(type: Double.self)
-            let fees       = try data.getArgument(type: Double.self)
-            let side       = try data.getArgument(type: Int.self)
-            let size       = try data.getArgument(type: Int.self)
-            let voided     = try data.getArgument(type: Bool.self)
-            let orderId    = try data.getArgument(type: Int.self)
-            let trade = Trade(
-                id: id, accountId: accountId, contractId: contractId,
-                creationTimestamp: creationTs, price: price,
-                profitAndLoss: try? data.getArgument(type: Double.self),
-                fees: fees, side: side, size: size,
-                voided: voided, orderId: orderId
-            )
+            let envelope = try data.getArgument(type: GatewayEnvelope<Trade>.self)
+            let trade = envelope.data
             Task { @MainActor in
                 self.liveTrades.insert(trade, at: 0)
                 if self.liveTrades.count > 200 {
@@ -349,7 +303,7 @@ class RealtimeService {
                     timestamp: Date(), source: .signalR, method: "GatewayUserTrade",
                     path: "UserHub", statusCode: nil, duration: nil,
                     requestBody: nil,
-                    responseBody: "id=\(id) orderId=\(orderId) side=\(side) size=\(size) price=\(price) pnl=\(trade.profitAndLoss.map { String($0) } ?? "nil")",
+                    responseBody: "id=\(trade.id) orderId=\(trade.orderId) side=\(trade.side) size=\(trade.size) price=\(trade.price) pnl=\(trade.profitAndLoss.map { String($0) } ?? "nil")",
                     error: nil
                 ))
             }
@@ -454,8 +408,15 @@ class RealtimeService {
         marketConnection?.on(method: "GatewayQuote", callback: { [weak self] (data: ArgumentExtractor) throws in
             guard let self else { return }
             let contractId = try data.getArgument(type: String.self)
-            let quote      = try data.getArgument(type: Quote.self)
+            let incoming   = try data.getArgument(type: Quote.self)
             Task { @MainActor in
+                // Merge: keep existing non-zero values when incoming fields default to 0
+                let quote: Quote
+                if let existing = self.contractQuotes[contractId] {
+                    quote = Quote.merged(existing: existing, incoming: incoming)
+                } else {
+                    quote = incoming
+                }
                 self.contractQuotes[contractId] = quote
                 NetworkLogger.shared.log(NetworkLogger.Entry(
                     timestamp: Date(), source: .signalR, method: "GatewayQuote",
@@ -468,24 +429,26 @@ class RealtimeService {
         })
 
         // ── Market Trades ─────────────────────
-        // Server sends: ["contractId", { trade object }]
+        // Server sends: ["contractId", [array of trade objects]]
         marketConnection?.on(method: "GatewayTrade", callback: { [weak self] (data: ArgumentExtractor) throws in
             guard let self else { return }
-            let _       = try data.getArgument(type: String.self) // contractId
-            let payload = try data.getArgument(type: MarketTradePayload.self)
-            let trade   = MarketTrade(from: payload)
+            let _        = try data.getArgument(type: String.self) // contractId
+            let payloads = try data.getArgument(type: [MarketTradePayload].self)
             Task { @MainActor in
-                self.marketTrades.insert(trade, at: 0)
+                for payload in payloads {
+                    let trade = MarketTrade(from: payload)
+                    self.marketTrades.insert(trade, at: 0)
+                    NetworkLogger.shared.log(NetworkLogger.Entry(
+                        timestamp: Date(), source: .signalR, method: "GatewayTrade",
+                        path: "MarketHub", statusCode: nil, duration: nil,
+                        requestBody: nil,
+                        responseBody: "\(payload.symbolId) price=\(payload.price) vol=\(payload.volume) type=\(payload.type)",
+                        error: nil
+                    ))
+                }
                 if self.marketTrades.count > 100 {
                     self.marketTrades = Array(self.marketTrades.prefix(100))
                 }
-                NetworkLogger.shared.log(NetworkLogger.Entry(
-                    timestamp: Date(), source: .signalR, method: "GatewayTrade",
-                    path: "MarketHub", statusCode: nil, duration: nil,
-                    requestBody: nil,
-                    responseBody: "\(payload.symbolId) price=\(payload.price) vol=\(payload.volume) type=\(payload.type)",
-                    error: nil
-                ))
             }
         })
 
@@ -494,7 +457,7 @@ class RealtimeService {
         marketConnection?.on(method: "GatewayDepth", callback: { [weak self] (data: ArgumentExtractor) throws in
             guard let self else { return }
             let _       = try data.getArgument(type: String.self) // contractId
-            let entries = try data.getArgument(type: [DepthEntry].self)
+            let entries = try data.getArgument(type: [DepthEntry?].self).compactMap { $0 }
 
             Task { @MainActor in
                 // Check for DOM reset
