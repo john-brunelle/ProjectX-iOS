@@ -18,7 +18,9 @@ struct PojectXApp: App {
             "pref_notifyOnTakeProfit": false,
             "pref_notifyOnOrderFill": false,
             "pref_notifyOnBotError": false,
-            "pref_enableRateLimiter": true
+            "pref_enableRateLimiter": true,
+            "pref_closePositionsOnStop": true,
+            "pref_cancelOrdersOnStop": true
         ])
         _ = NotificationService.shared
 
@@ -85,12 +87,12 @@ struct PojectXApp: App {
             // forces a fresh subscribe for positions/orders/quotes
             realtime.switchAccount(to: accountId)
 
-            // Reconnect Market Hub with fresh token (stale JWT in URL causes drops).
-            // Capture IDs before disconnect clears them.
-            let marketContractIds = realtime.subscribedContractIds
-            if !marketContractIds.isEmpty {
+            // Market Hub: auto-reconnect handles recovery.
+            // Only force reconnect if it's fully dead (marketConnection == nil).
+            if !realtime.isMarketConnected && !realtime.subscribedContractIds.isEmpty {
+                let contractIds = realtime.subscribedContractIds
                 realtime.disconnectMarket()
-                for contractId in marketContractIds {
+                for contractId in contractIds {
                     realtime.connectMarketHub(contractId: contractId)
                 }
             }

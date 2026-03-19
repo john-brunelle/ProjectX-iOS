@@ -60,6 +60,7 @@ struct BotDetailView: View {
     @State private var showArchiveConfirmation = false
     @State private var showClearLogConfirmation = false
     @State private var showResetPnLConfirmation = false
+    @State private var showTradeHistory = false
     @State private var resetPnLTarget: ResetPnLTarget = .session
 
     private enum ResetPnLTarget { case session, lifetime, all }
@@ -121,6 +122,10 @@ struct BotDetailView: View {
             }
             .sheet(item: $editingIndicator) { indicator in
                 IndicatorEditorView(existing: indicator)
+            }
+            .sheet(isPresented: $showTradeHistory) {
+                BotTradeHistoryView(bot: bot, accountId: service.activeAccount?.id ?? 0)
+                    .environment(service)
             }
             .confirmationDialog(resetPnLDialogTitle, isPresented: $showResetPnLConfirmation) {
                 Button("Reset", role: .destructive) {
@@ -682,6 +687,20 @@ struct BotDetailView: View {
                         Text(formatPnL(aggregatedUnrealized))
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.orange)
+                    }
+                }
+
+                // Trade History
+                Divider()
+                Button {
+                    showTradeHistory = true
+                } label: {
+                    HStack {
+                        Spacer()
+                        Label("View Trade History", systemImage: "clock.arrow.circlepath")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.blue)
+                        Spacer()
                     }
                 }
 

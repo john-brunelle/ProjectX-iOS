@@ -56,7 +56,9 @@ struct LiveQuoteView: View {
                 }
             }
             .onDisappear {
-                realtime.disconnectMarket()
+                // Only unsubscribe this contract, not the whole hub.
+                // Other contracts (from running bots) stay subscribed.
+                realtime.disconnectMarketContract(contractId: contract.id)
             }
         }
     }

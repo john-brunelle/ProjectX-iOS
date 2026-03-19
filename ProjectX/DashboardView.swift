@@ -14,7 +14,7 @@ struct DashboardView: View {
     var body: some View {
         TabView(selection: $selectedTab) {
             HomeView()
-                .tabItem { Label("Home",       systemImage: "house.fill") }
+                .tabItem { Label("The Hub", systemImage: "circle.hexagongrid.fill") }
                 .tag(0)
             AccountsTab()
                 .tabItem { Label("Accounts",   systemImage: "person.crop.rectangle.stack") }
@@ -24,7 +24,7 @@ struct DashboardView: View {
                 .badge(botRunner.runningCount)
                 .tag(2)
             IndicatorsView()
-                .tabItem { Label("Indicators", systemImage: "waveform.path.ecg") }
+                .tabItem { Label("Signals", systemImage: "waveform.path.ecg") }
                 .tag(3)
             LiveDashboardView()
                 .tabItem { Label("Live",       systemImage: "dot.radiowaves.left.and.right") }

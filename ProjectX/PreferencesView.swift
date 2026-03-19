@@ -21,8 +21,8 @@ struct PreferencesView: View {
     @AppStorage("pref_autoRestoreBots") private var autoRestoreBots = true
 
     // MARK: - Bot Stop Behavior
-    @AppStorage("pref_closePositionsOnStop") private var closePositionsOnStop = false
-    @AppStorage("pref_cancelOrdersOnStop") private var cancelOrdersOnStop = false
+    @AppStorage("pref_closePositionsOnStop") private var closePositionsOnStop = true
+    @AppStorage("pref_cancelOrdersOnStop") private var cancelOrdersOnStop = true
 
     // MARK: - Rate Limiter
     @AppStorage("pref_enableRateLimiter") private var enableRateLimiter = true
@@ -90,7 +90,6 @@ struct PreferencesView: View {
                             value: $defaultTakeProfitTicks, in: 1...500)
                     Stepper("Quantity: \(defaultQuantity)",
                             value: $defaultQuantity, in: 1...100)
-                    Toggle("Auto-Restore Bots on Launch", isOn: $autoRestoreBots)
                 } header: {
                     Text("Bot Defaults")
                 } footer: {

@@ -37,8 +37,6 @@ struct HomeView: View {
     @State private var path = NavigationPath()
     @State private var showStopAllConfirmation = false
     @State private var showNuclearConfirmation = false
-    @State private var showGlobalStopAllConfirmation = false
-    @State private var showGlobalNuclearConfirmation = false
     @State private var showStopActions = false
     @State private var showAddBotSheet = false
     @State private var editingBots = false
@@ -76,41 +74,19 @@ struct HomeView: View {
             .refreshable {
                 await realtime.refreshHomeData()
             }
-            .task {
-                while !Task.isCancelled {
-                    await realtime.refreshHomeData()
-                    try? await Task.sleep(for: .seconds(15))
-                }
-            }
             .toolbar {
                 if botRunner.runningCount > 0 {
                     ToolbarItem(placement: .navigationBarTrailing) {
-                        Menu {
-                            Button(role: .destructive) {
-                                showGlobalStopAllConfirmation = true
-                            } label: {
-                                Label("Stop All Bots (\(botRunner.runningCount))", systemImage: "stop.circle.fill")
-                            }
-                            Button(role: .destructive) {
-                                showGlobalNuclearConfirmation = true
-                            } label: {
-                                Label("Nuclear Stop — All Accounts", systemImage: "exclamationmark.octagon.fill")
-                            }
+                        Button(role: .destructive) {
+                            showNuclearConfirmation = true
                         } label: {
                             Image(systemName: "exclamationmark.octagon.fill")
                                 .foregroundStyle(.red)
                         }
                     }
                 }
-                ToolbarItem(placement: .primaryAction) {
-                    Button {
-                        Task { await realtime.refreshHomeData() }
-                    } label: {
-                        Image(systemName: "arrow.clockwise")
-                    }
-                }
             }
-            .navigationTitle("Home")
+            .navigationTitle("The Hub")
             .navigationDestination(for: HomeDestination.self) { destination in
                 switch destination {
                 case .accounts:   AccountsTab(isEmbedded: true)
@@ -139,47 +115,19 @@ struct HomeView: View {
             Text("This will stop all bots running on this account. Bots on other accounts are unaffected. Open positions will remain open.")
         }
         .confirmationDialog(
-            "Nuclear Stop — This Account?",
+            "Stop Everything?",
             isPresented: $showNuclearConfirmation,
             titleVisibility: .visible
         ) {
-            if let accountId = service.activeAccount?.id {
-                Button("Stop Bots, Cancel Orders & Close Positions", role: .destructive) {
-                    Task { await botRunner.nuclearStop(accountId: accountId) }
-                }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("This will stop all bots on this account, cancel its open orders, and close its open positions. Other accounts are unaffected. This cannot be undone.")
-        }
-        .confirmationDialog(
-            "Stop All Bots?",
-            isPresented: $showGlobalStopAllConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button("Stop All \(botRunner.runningCount) Bot\(botRunner.runningCount == 1 ? "" : "s") on All Accounts", role: .destructive) {
-                botRunner.stopAll()
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("This will immediately stop every running bot across all accounts. Open positions will remain open.")
-        }
-        .confirmationDialog(
-            "Nuclear Stop — All Accounts?",
-            isPresented: $showGlobalNuclearConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button("Stop All Bots, Cancel All Orders & Close All Positions", role: .destructive) {
+            Button("Stop All Bots, Cancel Orders & Close Positions", role: .destructive) {
                 Task { await botRunner.nuclearStop() }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("This will stop every bot, cancel every open order, and close every open position across all accounts. This cannot be undone.")
         }
-        .onChange(of: botRunner.runningCount) { old, new in
-            if old == 0 && new > 0 {
-                withAnimation { showStopActions = true }
-            } else if new == 0 {
+        .onChange(of: botRunner.runningCount) { _, new in
+            if new == 0 {
                 showStopActions = false
             }
         }
@@ -477,7 +425,7 @@ struct HomeView: View {
 
     private var botsCard: some View {
         card("Bots", systemImage: "gearshape.2.fill") {
-            HStack(spacing: 16) {
+            HStack(spacing: 6) {
                 Button {
                     withAnimation { editingBots.toggle() }
                 } label: {
@@ -751,63 +699,23 @@ struct HomeView: View {
                             .foregroundStyle(.tertiary)
                     }
 
-                    if let activeAccountId = service.activeAccount?.id,
-                       botRunner.runningCount(accountId: activeAccountId) > 0 {
-                        let acctRunning = botRunner.runningCount(accountId: activeAccountId)
+                    if botRunner.runningCount > 0 {
                         Divider()
 
-                        // Disclosure header — visible only when bots are running on this account
-                        HStack {
-                            Text("Stop Actions")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                            Image(systemName: "chevron.right")
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
-                                .rotationEffect(.degrees(showStopActions ? 90 : 0))
-                                .animation(.easeInOut(duration: 0.2), value: showStopActions)
-                        }
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            withAnimation { showStopActions.toggle() }
-                        }
-
-                        if showStopActions {
-                            VStack(spacing: 8) {
-                                // Stop bots on this account only
-                                Button(role: .destructive) {
-                                    showStopAllConfirmation = true
-                                } label: {
-                                    Label(
-                                        "Stop Bots on This Account (\(acctRunning))",
-                                        systemImage: "stop.circle.fill"
-                                    )
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(.red)
-                                    .frame(maxWidth: .infinity)
-                                }
-                                .buttonStyle(.plain)
-
-                                // Nuclear stop — bots + orders + positions on this account
-                                Button(role: .destructive) {
-                                    showNuclearConfirmation = true
-                                } label: {
-                                    Label(
-                                        "Nuclear Stop — Bots, Orders & Positions",
-                                        systemImage: "exclamationmark.octagon.fill"
-                                    )
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(.orange)
-                                    .frame(maxWidth: .infinity)
-                                }
-                                .buttonStyle(.plain)
-
-                                Text("Only affects this account's bots and positions.")
-                                    .font(.caption2)
-                                    .foregroundStyle(.tertiary)
+                        // Emergency stop
+                        Button(role: .destructive) {
+                            showNuclearConfirmation = true
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "stop.fill")
+                                    .font(.system(size: 8))
+                                Text("Stop All")
                             }
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.red.opacity(0.6))
+                            .frame(maxWidth: .infinity)
                         }
+                        .buttonStyle(.plain)
                     }
 
                 }
