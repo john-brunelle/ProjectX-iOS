@@ -518,27 +518,14 @@ class BotRunner {
             return
         }
 
-        // Update state
-        updateState(key: key) { state in
-            state.lastBarTime = bars.last?.t
-            state.lastPollTime = Date()
-        }
-
-        logToState(key: key, type: .info, message: "Fetched \(bars.count) bars")
-
         // Evaluate indicators
         let signal = IndicatorEngine.evaluateAll(bars: bars, configs: bot.indicators)
-
-        updateState(key: key) { state in
-            state.lastSignal = signal
-        }
 
         // Get current price: prefer SignalR live quote, fall back to 1-second bars
         let signalrPrice = await MainActor.run { realtime.contractQuotes[bot.contractId]?.lastPrice }
         let lastPrice: Double
         if let sqp = signalrPrice, sqp > 0 {
             lastPrice = sqp
-            logToState(key: key, type: .info, message: "Price source: SignalR (\(String(format: "%.2f", sqp)))")
         } else {
             let now = Date()
             let priceBars = await service.retrieveBars(
@@ -551,27 +538,35 @@ class BotRunner {
                 limit: 10,
                 includePartialBar: true
             )
-            let fallback = priceBars.last?.c ?? bars.last?.c ?? 0
-            lastPrice = fallback
-            logToState(key: key, type: .info, message: "Price source: REST fallback (\(String(format: "%.2f", fallback)))")
+            lastPrice = priceBars.last?.c ?? bars.last?.c ?? 0
+        }
+
+        // Batch all state updates into a single mutation to minimize SwiftUI re-renders
+        updateState(key: key) { state in
+            state.lastBarTime = bars.last?.t
+            state.lastPollTime = Date()
+            state.lastSignal = signal
         }
         updateTodayPnL(key: key, bot: bot, lastPrice: lastPrice)
 
+        // Only log signal changes or non-neutral signals to reduce noise
+        let signalLabel = signal == .buy ? "BUY" : signal == .sell ? "SELL" : "NEUTRAL"
+        let priceSource = signalrPrice != nil && signalrPrice! > 0 ? "SR" : "REST"
+        logToState(key: key, type: .signal,
+                   message: "\(signalLabel) | \(bars.count) bars | \(priceSource) \(String(format: "%.2f", lastPrice))")
+
         switch signal {
         case .buy:
-            logToState(key: key, type: .signal, message: "Signal: BUY")
             if bot.tradeDirection == .shortOnly {
                 logToState(key: key, type: .info, message: "Skipped: bot set to Shorts Only")
                 return
             }
         case .sell:
-            logToState(key: key, type: .signal, message: "Signal: SELL")
             if bot.tradeDirection == .longOnly {
                 logToState(key: key, type: .info, message: "Skipped: bot set to Longs Only")
                 return
             }
         case .neutral:
-            logToState(key: key, type: .signal, message: "Signal: Neutral")
             return
         }
 
@@ -666,8 +661,6 @@ class BotRunner {
             let tickValue = tickInfo?.tickValue ?? 12.50
             let ticks = priceDiff / tickSize
             let unrealized = ticks * tickValue * direction
-            logToState(key: key, type: .info,
-                       message: "Unrealized: posId=\(position.id) \(position.isLong ? "LONG" : "SHORT") last=\(lastPrice) avg=\(position.averagePrice) diff=\(String(format: "%.2f", priceDiff)) ticks=\(String(format: "%.1f", ticks)) tickSize=\(tickSize) tickVal=\(tickValue) size=\(position.size) dir=\(direction) pnl=\(String(format: "%.2f", unrealized))")
             updateState(key: key) { state in
                 state.unrealizedPnL = unrealized
             }
@@ -767,12 +760,32 @@ class BotRunner {
         insertLogRecord(entry)
     }
 
-    // MARK: - Log Persistence (SwiftData)
+    // MARK: - Log Persistence (SwiftData) — batched
+
+    private var pendingLogRecords: [BotLogEntry] = []
+    private var logSaveTask: Task<Void, Never>?
+    private let logSaveDebounce: TimeInterval = 5.0
 
     private func insertLogRecord(_ entry: BotLogEntry) {
-        guard let ctx = modelContext else { return }
-        ctx.insert(BotLogEntryRecord(entry: entry))
-        trimLogRecords(botId: entry.botId, accountId: entry.accountId, in: ctx)
+        pendingLogRecords.append(entry)
+        logSaveTask?.cancel()
+        logSaveTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(self?.logSaveDebounce ?? 5))
+            self?.flushPendingLogs()
+        }
+    }
+
+    private func flushPendingLogs() {
+        guard let ctx = modelContext, !pendingLogRecords.isEmpty else { return }
+        let toFlush = pendingLogRecords
+        pendingLogRecords.removeAll()
+        for entry in toFlush {
+            ctx.insert(BotLogEntryRecord(entry: entry))
+        }
+        // Trim once per flush, not per record
+        if let first = toFlush.first {
+            trimLogRecords(botId: first.botId, accountId: first.accountId, in: ctx)
+        }
         try? ctx.save()
     }
 

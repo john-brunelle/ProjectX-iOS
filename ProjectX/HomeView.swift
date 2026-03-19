@@ -834,13 +834,17 @@ struct HomeView: View {
         }
     }
 
+    private static let pnlFormatter: NumberFormatter = {
+        let f = NumberFormatter()
+        f.numberStyle = .currency
+        f.currencyCode = "USD"
+        f.positivePrefix = "+"
+        f.maximumFractionDigits = 2
+        return f
+    }()
+
     private func formatPnL(_ value: Double) -> String {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .currency
-        formatter.currencyCode = "USD"
-        formatter.positivePrefix = "+"
-        formatter.maximumFractionDigits = 2
-        return formatter.string(from: NSNumber(value: value)) ?? "$0.00"
+        Self.pnlFormatter.string(from: NSNumber(value: value)) ?? "$0.00"
     }
 
     // ═══════════════════════════════════════════

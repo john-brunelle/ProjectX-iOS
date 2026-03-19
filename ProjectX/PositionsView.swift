@@ -80,7 +80,7 @@ struct PositionsView: View {
             .task {
                 await reload()
                 while !Task.isCancelled {
-                    try? await Task.sleep(for: .seconds(15))
+                    try? await Task.sleep(for: .seconds(60))
                     await reload()
                 }
             }
