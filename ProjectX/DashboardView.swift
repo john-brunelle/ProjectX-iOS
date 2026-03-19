@@ -41,14 +41,14 @@ struct DashboardView: View {
             ContractsView()
                 .tabItem { Label("Contracts",  systemImage: "doc.text.magnifyingglass") }
                 .tag(8)
-            ThemesView()
-                .tabItem { Label("Themes",     systemImage: "paintbrush.fill") }
-                .tag(9)
             NetworkActivityView()
                 .tabItem { Label("Network",    systemImage: "network") }
+                .tag(9)
+            ControlsView()
+                .tabItem { Label("Controls", systemImage: "slider.horizontal.3") }
                 .tag(10)
             PreferencesView()
-                .tabItem { Label("Preferences", systemImage: "slider.horizontal.3") }
+                .tabItem { Label("Preferences", systemImage: "gearshape.fill") }
                 .tag(11)
         }
         .environment(service)
