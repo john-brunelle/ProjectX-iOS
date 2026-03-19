@@ -126,16 +126,27 @@ class NetworkLogger {
 
     private let maxRecords = 500
 
+    // MARK: - Batched Persistence
+
+    private var pendingRecords: [Entry] = []
+    private var saveTask: Task<Void, Never>?
+    private let saveDebounceInterval: TimeInterval = 5.0
+
     // MARK: - Actions
 
     func log(_ entry: Entry) {
         entries.insert(entry, at: 0)
-        pruneOldEntries()
-        persistRecord(entry)
+        if entries.count > maxRecords {
+            entries.removeLast(entries.count - maxRecords)
+        }
+        schedulePersist(entry)
     }
 
     func clear() {
         entries.removeAll()
+        pendingRecords.removeAll()
+        saveTask?.cancel()
+        saveTask = nil
         removeAllRecords()
     }
 
@@ -152,9 +163,23 @@ class NetworkLogger {
 
     // MARK: - Persistence Helpers
 
-    private func persistRecord(_ entry: Entry) {
-        guard let ctx = modelContext else { return }
-        ctx.insert(NetworkLogRecord(entry: entry))
+    /// Queue an entry for batched persistence instead of saving immediately.
+    private func schedulePersist(_ entry: Entry) {
+        pendingRecords.append(entry)
+        saveTask?.cancel()
+        saveTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(self?.saveDebounceInterval ?? 5))
+            self?.flushPendingRecords()
+        }
+    }
+
+    /// Write all queued records to SwiftData in a single batch.
+    private func flushPendingRecords() {
+        guard let ctx = modelContext, !pendingRecords.isEmpty else { return }
+        for entry in pendingRecords {
+            ctx.insert(NetworkLogRecord(entry: entry))
+        }
+        pendingRecords.removeAll()
         trimRecords(in: ctx)
         try? ctx.save()
     }

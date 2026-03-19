@@ -418,13 +418,6 @@ class RealtimeService {
                     quote = incoming
                 }
                 self.contractQuotes[contractId] = quote
-                NetworkLogger.shared.log(NetworkLogger.Entry(
-                    timestamp: Date(), source: .signalR, method: "GatewayQuote",
-                    path: "MarketHub", statusCode: nil, duration: nil,
-                    requestBody: nil,
-                    responseBody: "\(quote.symbol) last=\(quote.lastPrice) bid=\(quote.bestBid) ask=\(quote.bestAsk) vol=\(quote.volume)",
-                    error: nil
-                ))
             }
         })
 
@@ -435,17 +428,8 @@ class RealtimeService {
             let _        = try data.getArgument(type: String.self) // contractId
             let payloads = try data.getArgument(type: [MarketTradePayload].self)
             Task { @MainActor in
-                for payload in payloads {
-                    let trade = MarketTrade(from: payload)
-                    self.marketTrades.insert(trade, at: 0)
-                    NetworkLogger.shared.log(NetworkLogger.Entry(
-                        timestamp: Date(), source: .signalR, method: "GatewayTrade",
-                        path: "MarketHub", statusCode: nil, duration: nil,
-                        requestBody: nil,
-                        responseBody: "\(payload.symbolId) price=\(payload.price) vol=\(payload.volume) type=\(payload.type)",
-                        error: nil
-                    ))
-                }
+                let newTrades = payloads.map { MarketTrade(from: $0) }
+                self.marketTrades.insert(contentsOf: newTrades, at: 0)
                 if self.marketTrades.count > 100 {
                     self.marketTrades = Array(self.marketTrades.prefix(100))
                 }
@@ -466,18 +450,20 @@ class RealtimeService {
                     return
                 }
 
+                // Batch-apply updates to a local copy, then assign once
+                var updated = self.domEntries
                 for entry in entries {
-                    let domEntry = DOMEntry(
-                        timestamp: entry.timestamp, type: entry.type,
-                        price: entry.price, volume: entry.volume, currentVolume: entry.currentVolume
-                    )
-                    self.domEntries.removeAll { $0.price == entry.price && $0.type == entry.type }
-                    if entry.volume > 0 { self.domEntries.append(domEntry) }
+                    updated.removeAll { $0.price == entry.price && $0.type == entry.type }
+                    if entry.volume > 0 {
+                        updated.append(DOMEntry(
+                            timestamp: entry.timestamp, type: entry.type,
+                            price: entry.price, volume: entry.volume, currentVolume: entry.currentVolume
+                        ))
+                    }
                 }
-                self.domEntries.sort { $0.price > $1.price }
-                if self.domEntries.count > 40 {
-                    self.domEntries = Array(self.domEntries.prefix(40))
-                }
+                updated.sort { $0.price > $1.price }
+                if updated.count > 40 { updated = Array(updated.prefix(40)) }
+                self.domEntries = updated
             }
         })
     }
