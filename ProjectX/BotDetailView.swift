@@ -56,6 +56,15 @@ struct BotDetailView: View {
     @State private var backtestError: String?
     @State private var backtestBarCount = 0
 
+    // ── ATR tool state ──
+    @State private var showATR = false
+    @State private var atrValue: Double?
+    @State private var atrTicks: Double?
+    @State private var isCalculatingATR = false
+    @State private var atrBarCount = 50
+    @State private var showATRInfo = false
+    @State private var atrMultiplier: Double = 1.5
+
     // ── Other UI state ──
     @State private var showArchiveConfirmation = false
     @State private var showClearLogConfirmation = false
@@ -431,6 +440,77 @@ struct BotDetailView: View {
                 if useStopLoss {
                     Stepper("Ticks: \(stopLossTicks)", value: $stopLossTicks, in: 1...500)
                 }
+            }
+            Button {
+                withAnimation { showATR.toggle() }
+            } label: {
+                HStack {
+                    Image(systemName: "function")
+                    Text("ATR Tool")
+                    Spacer()
+                    Image(systemName: showATR ? "chevron.up" : "chevron.down")
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+
+        if showATR {
+            Section {
+                Stepper("Bars: \(atrBarCount)", value: $atrBarCount, in: 20...200, step: 10)
+
+                if isCalculatingATR {
+                    HStack {
+                        ProgressView()
+                        Text("Calculating...")
+                            .foregroundStyle(.secondary)
+                    }
+                } else if let atrTicks {
+                    let tick = botRunner.contractTickInfo[bot.contractId]
+                    let tickValue = tick?.tickValue ?? 0
+                    HStack {
+                        Text("ATR")
+                        Spacer()
+                        if tickValue > 0 {
+                            Text("\(String(format: "%.1f", atrTicks)) ticks (\(String(format: "$%.2f", atrTicks * tickValue)))")
+                                .fontWeight(.semibold)
+                        } else {
+                            Text("\(String(format: "%.1f", atrTicks)) ticks")
+                                .fontWeight(.semibold)
+                        }
+                    }
+
+                    let stopTicks = Int(round(atrMultiplier * atrTicks))
+                    Stepper("Multiplier: \(String(format: "%.1f", atrMultiplier))x", value: $atrMultiplier, in: 0.5...5.0, step: 0.5)
+                    Button("Set Stop Loss to \(stopTicks) ticks") {
+                        useStopLoss = true
+                        stopLossTicks = max(1, stopTicks)
+                    }
+                    .disabled(isRunning)
+
+                    Button("Refresh") {
+                        Task { await calculateATR() }
+                    }
+                    .font(.caption)
+                } else {
+                    Button("Calculate ATR") {
+                        Task { await calculateATR() }
+                    }
+                }
+            } header: {
+                HStack {
+                    Text("ATR Tool")
+                    Button {
+                        showATRInfo = true
+                    } label: {
+                        Image(systemName: "info.circle")
+                            .font(.caption)
+                    }
+                }
+            }
+            .alert("Average True Range (ATR)", isPresented: $showATRInfo) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("ATR measures market volatility by averaging the true range of price bars over 14 periods. The true range is the greatest of: current high minus low, absolute value of high minus previous close, or absolute value of low minus previous close.\n\nUse ATR to help set stop loss and take profit levels. A common approach is setting stops at 1-2x ATR from your entry price.")
             }
         }
 
@@ -880,6 +960,65 @@ struct BotDetailView: View {
             ForEach(result.trades) { trade in
                 BacktestTradeRow(trade: trade)
             }
+        }
+    }
+
+    // MARK: - ATR Calculation
+
+    private func calculateATR() async {
+        isCalculatingATR = true
+        defer { isCalculatingATR = false }
+
+        let bars = await ProjectXService.shared.retrieveBars(
+            contractId: bot.contractId,
+            live: false,
+            startTime: Calendar.current.date(byAdding: .day, value: -7, to: Date()) ?? Date(),
+            endTime: Date(),
+            unit: bot.barUnitEnum ?? .minute,
+            unitNumber: bot.barUnitNumber,
+            limit: atrBarCount,
+            includePartialBar: false
+        )
+
+        guard bars.count >= 15 else {
+            atrValue = nil
+            atrTicks = nil
+            return
+        }
+
+        // ATR(14): average of 14-period true ranges
+        let period = 14
+        var trueRanges: [Double] = []
+        for i in 1..<bars.count {
+            let high = bars[i].h
+            let low = bars[i].l
+            let prevClose = bars[i - 1].c
+            let tr = max(high - low, abs(high - prevClose), abs(low - prevClose))
+            trueRanges.append(tr)
+        }
+
+        // Wilder's smoothed ATR
+        guard trueRanges.count >= period else { return }
+        var atr = trueRanges.prefix(period).reduce(0, +) / Double(period)
+        for i in period..<trueRanges.count {
+            atr = (atr * Double(period - 1) + trueRanges[i]) / Double(period)
+        }
+
+        atrValue = atr
+
+        // Try cached tick info first, otherwise fetch contract details
+        var tickSize = botRunner.contractTickInfo[bot.contractId]?.tickSize
+        if tickSize == nil || tickSize == 0 {
+            if let contract = await service.contractById(bot.contractId) {
+                tickSize = contract.tickSize
+            }
+        }
+
+        if let tickSize, tickSize > 0 {
+            atrTicks = atr / tickSize
+        } else {
+            // Fallback: show ATR without tick conversion
+            atrTicks = atr
         }
     }
 

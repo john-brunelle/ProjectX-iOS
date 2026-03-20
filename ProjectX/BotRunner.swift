@@ -511,6 +511,7 @@ class BotRunner {
         let barDuration = barDurationSeconds(for: bot)
         let housekeepingInterval: Double = 30
         var lastHousekeepingTime: Date = .distantPast
+        var lastInPositionLog: Date = .distantPast
 
         while !Task.isCancelled {
             let now = Date()
@@ -526,6 +527,11 @@ class BotRunner {
                 $0.accountId == accountId && $0.contractId == bot.contractId
             }
             if hasPosition {
+                // Log once per bar duration cycle
+                if Date().timeIntervalSince(lastInPositionLog) >= barDuration {
+                    logToState(key: key, type: .info, message: "In position — AI Bot paused")
+                    lastInPositionLog = Date()
+                }
                 try? await Task.sleep(for: .seconds(housekeepingInterval))
                 continue
             }
