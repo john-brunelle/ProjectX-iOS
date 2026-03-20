@@ -73,6 +73,10 @@ struct BotRunState {
     var todayPnL: Double = 0            // realized P&L from closed trades
     var unrealizedPnL: Double = 0         // unrealized P&L from open position
     var todayTradeCount: Int = 0
+
+    // Claude AI — only call when a new bar closes
+    var lastClaudeBarTime: String?
+    var lastClaudeSignal: Signal = .neutral
 }
 
 // MARK: - Bot Runner
@@ -489,18 +493,75 @@ class BotRunner {
     // MARK: - Polling Loop
 
     private func pollLoop(bot: BotConfig, accountId: Int) async {
-        while !Task.isCancelled {
-            await pollOnce(bot: bot, accountId: accountId)
-            let interval = pollingInterval(for: bot)
-            try? await Task.sleep(for: .seconds(interval))
+        if pollingMode(for: bot) == .aiOnly {
+            await aiOnlyPollLoop(bot: bot, accountId: accountId)
+        } else {
+            while !Task.isCancelled {
+                await pollOnce(bot: bot, accountId: accountId)
+                let interval = pollingInterval(for: bot)
+                try? await Task.sleep(for: .seconds(interval))
+            }
         }
     }
 
-    private func pollOnce(bot: BotConfig, accountId: Int) async {
+    // MARK: - AI-Only Polling
+
+    private func aiOnlyPollLoop(bot: BotConfig, accountId: Int) async {
+        let key = BotRunKey(botId: bot.id, accountId: accountId)
+        let barDuration = barDurationSeconds(for: bot)
+        let housekeepingInterval: Double = 30
+        var lastHousekeepingTime: Date = .distantPast
+
+        while !Task.isCancelled {
+            let now = Date()
+
+            // 1. Housekeeping (positions, orders, P&L) every 30s
+            if now.timeIntervalSince(lastHousekeepingTime) >= housekeepingInterval {
+                await housekeepingPass(bot: bot, accountId: accountId)
+                lastHousekeepingTime = Date()
+            }
+
+            // 2. Skip indicator evaluation if in a position
+            let hasPosition = realtime.livePositions.contains {
+                $0.accountId == accountId && $0.contractId == bot.contractId
+            }
+            if hasPosition {
+                try? await Task.sleep(for: .seconds(housekeepingInterval))
+                continue
+            }
+
+            // 3. Lightweight bar-close check (small window, completed only)
+            let checkBars = await service.retrieveBars(
+                contractId: bot.contractId,
+                live: false,
+                startTime: Date().addingTimeInterval(-barDuration * 3),
+                endTime: Date(),
+                unit: bot.barUnitEnum ?? .minute,
+                unitNumber: bot.barUnitNumber,
+                limit: 10,
+                includePartialBar: false
+            )
+
+            let currentBarTime = checkBars.last?.t
+            let cachedBarTime = runStates[key]?.lastClaudeBarTime
+
+            if currentBarTime != cachedBarTime && currentBarTime != nil {
+                // New bar closed — fetch precise data and evaluate
+                await aiEvaluationPass(bot: bot, accountId: accountId)
+                // Sleep for the full bar duration — next bar won't close sooner
+                try? await Task.sleep(for: .seconds(barDuration))
+            } else {
+                // No new bar yet — check again in 30s or half the bar duration
+                try? await Task.sleep(for: .seconds(min(30, barDuration / 2)))
+            }
+        }
+    }
+
+    /// Lightweight pass: refresh positions/orders/trades and update P&L.
+    /// No bar fetches, no indicator evaluation.
+    private func housekeepingPass(bot: BotConfig, accountId: Int) async {
         let key = BotRunKey(botId: bot.id, accountId: accountId)
 
-        // REST refresh on every poll ensures data accuracy.
-        // SignalR provides faster intermediate updates between polls.
         async let freshPositions = service.searchOpenPositions(accountId: accountId)
         async let freshOrders    = service.searchOpenOrders(accountId: accountId)
         async let freshTrades    = service.searchTrades(
@@ -509,19 +570,130 @@ class BotRunner {
         let (positions, orders, trades) = await (freshPositions, freshOrders, freshTrades)
         realtime.updateFromREST(positions: positions, orders: orders, trades: trades)
 
-        // Fetch bars — use a shorter window to ensure we get the most recent bars.
-        // For indicators we need enough history, but the last bar must be current.
-        let bars = await service.retrieveBarsForBot(bot, daysBack: 7, limit: 500)
+        // Get price for P&L tracking
+        let signalrPrice = await MainActor.run { realtime.contractQuotes[bot.contractId]?.lastPrice }
+        let lastPrice: Double
+        if let sqp = signalrPrice, sqp > 0 {
+            lastPrice = sqp
+        } else {
+            let now = Date()
+            let priceBars = await service.retrieveBars(
+                contractId: bot.contractId, live: false,
+                startTime: now.addingTimeInterval(-10), endTime: now,
+                unit: .second, unitNumber: 1, limit: 10, includePartialBar: true
+            )
+            lastPrice = priceBars.last?.c ?? 0
+        }
+
+        updateState(key: key) { state in
+            state.lastPollTime = Date()
+        }
+        updateTodayPnL(key: key, bot: bot, lastPrice: lastPrice)
+    }
+
+    /// Fetch only the bars Claude needs, call the API, and act on the signal.
+    private func aiEvaluationPass(bot: BotConfig, accountId: Int) async {
+        let key = BotRunKey(botId: bot.id, accountId: accountId)
+
+        guard let claudeConfig = bot.indicators.first(where: { $0.indicatorType == .claudeAI }),
+              case .claudeAI(let model, let barCount, let customPrompt) = claudeConfig.parameters
+        else { return }
+
+        // Fetch only the bars Claude needs — completed bars only, 7-day window
+        // to ensure enough trading sessions even with market gaps
+        let start = Calendar.current.date(byAdding: .day, value: -7, to: Date()) ?? Date()
+        let bars = await service.retrieveBars(
+            contractId: bot.contractId,
+            live: false,
+            startTime: start,
+            endTime: Date(),
+            unit: bot.barUnitEnum ?? .minute,
+            unitNumber: bot.barUnitNumber,
+            limit: barCount,
+            includePartialBar: false
+        )
 
         guard !bars.isEmpty else {
-            logToState(key: key, type: .error, message: "Failed to fetch bars (0 returned)")
+            logToState(key: key, type: .error, message: "Failed to fetch bars for AI evaluation")
             return
         }
 
-        // Evaluate indicators
-        let signal = IndicatorEngine.evaluateAll(bars: bars, configs: bot.indicators)
+        // Call Claude
+        let tick = contractTickInfo[bot.contractId]
+        let result = await ClaudeAIService.shared.evaluate(
+            bars: bars,
+            contractName: bot.contractName,
+            contractId: bot.contractId,
+            barSize: bot.barSizeLabel,
+            model: model,
+            barCount: barCount,
+            tickSize: tick?.tickSize,
+            tickValue: tick?.tickValue,
+            customPrompt: customPrompt
+        )
 
-        // Get current price: prefer SignalR live quote, fall back to 1-second bars
+        let signal = result.signal
+        updateState(key: key) { state in
+            state.lastClaudeBarTime = bars.last?.t
+            state.lastClaudeSignal = signal
+            state.lastBarTime = bars.last?.t
+            state.lastPollTime = Date()
+            state.lastSignal = signal
+        }
+
+        // Log market data first, then Claude result
+        let signalrPrice = await MainActor.run { realtime.contractQuotes[bot.contractId]?.lastPrice }
+        let lastPrice = (signalrPrice != nil && signalrPrice! > 0) ? signalrPrice! : (bars.last?.c ?? 0)
+        let priceSource = (signalrPrice != nil && signalrPrice! > 0) ? "SR" : "REST"
+        let signalLabel = signal == .buy ? "BUY" : signal == .sell ? "SELL" : "NEUTRAL"
+        logToState(key: key, type: .signal,
+                   message: "\(signalLabel) | \(bars.count) bars | \(priceSource) \(String(format: "%.2f", lastPrice))")
+
+        let confPct = String(format: "%.0f%%", result.confidence * 100)
+        logToState(key: key, type: .signal,
+                   message: "Claude: \(signalLabel) (\(confPct)) — \(result.reason)")
+
+        updateTodayPnL(key: key, bot: bot, lastPrice: lastPrice)
+
+        // Direction filter
+        switch signal {
+        case .buy:
+            if bot.tradeDirection == .shortOnly {
+                logToState(key: key, type: .info, message: "Skipped: bot set to Shorts Only")
+                return
+            }
+        case .sell:
+            if bot.tradeDirection == .longOnly {
+                logToState(key: key, type: .info, message: "Skipped: bot set to Longs Only")
+                return
+            }
+        case .neutral:
+            return
+        }
+
+        await handleSignal(signal, bot: bot, accountId: accountId)
+    }
+
+    // MARK: - Traditional Polling
+
+    private func pollOnce(bot: BotConfig, accountId: Int) async {
+        let key = BotRunKey(botId: bot.id, accountId: accountId)
+
+        // REST refresh on every poll — keeps P&L and position tracking accurate
+        async let freshPositions = service.searchOpenPositions(accountId: accountId)
+        async let freshOrders    = service.searchOpenOrders(accountId: accountId)
+        async let freshTrades    = service.searchTrades(
+            accountId: accountId, startTimestamp: RealtimeService.sessionStart())
+
+        let (positions, orders, trades) = await (freshPositions, freshOrders, freshTrades)
+        realtime.updateFromREST(positions: positions, orders: orders, trades: trades)
+
+        // Check if we have an open position on this contract
+        let hasPosition = realtime.livePositions.contains {
+            $0.accountId == accountId && $0.contractId == bot.contractId
+        }
+
+        // Get current price for P&L tracking (needed whether or not we have a position)
         let signalrPrice = await MainActor.run { realtime.contractQuotes[bot.contractId]?.lastPrice }
         let lastPrice: Double
         if let sqp = signalrPrice, sqp > 0 {
@@ -538,7 +710,81 @@ class BotRunner {
                 limit: 10,
                 includePartialBar: true
             )
-            lastPrice = priceBars.last?.c ?? bars.last?.c ?? 0
+            lastPrice = priceBars.last?.c ?? 0
+        }
+
+        // If in a position, just track P&L — skip bars, indicators, and Claude
+        if hasPosition {
+            updateState(key: key) { state in
+                state.lastPollTime = Date()
+            }
+            updateTodayPnL(key: key, bot: bot, lastPrice: lastPrice)
+            return
+        }
+
+        // No position — evaluate indicators to look for entry signals
+
+        // Fetch bars
+        let bars = await service.retrieveBarsForBot(bot, daysBack: 7, limit: 500)
+
+        guard !bars.isEmpty else {
+            logToState(key: key, type: .error, message: "Failed to fetch bars (0 returned)")
+            return
+        }
+
+        // Split indicators: sync (local) vs async (Claude AI)
+        let syncIndicators = bot.indicators.filter { $0.indicatorType != .claudeAI }
+        let claudeConfig = bot.indicators.first { $0.indicatorType == .claudeAI }
+
+        // Evaluate local indicators synchronously
+        let syncSignal = IndicatorEngine.evaluateAll(bars: bars, configs: syncIndicators)
+
+        // Evaluate Claude AI indicator asynchronously (if configured)
+        // Only calls the API when a new bar closes — reuses cached signal otherwise
+        let currentBarTime = bars.last?.t
+        var claudeSignal: Signal = .neutral
+        if let config = claudeConfig,
+           case .claudeAI(let model, let barCount, let customPrompt) = config.parameters {
+            let cachedBarTime = runStates[key]?.lastClaudeBarTime
+            if currentBarTime != cachedBarTime {
+                // New bar closed — call Claude
+                let tick = contractTickInfo[bot.contractId]
+                let result = await ClaudeAIService.shared.evaluate(
+                    bars: bars,
+                    contractName: bot.contractName,
+                    contractId: bot.contractId,
+                    barSize: bot.barSizeLabel,
+                    model: model,
+                    barCount: barCount,
+                    tickSize: tick?.tickSize,
+                    tickValue: tick?.tickValue,
+                    customPrompt: customPrompt
+                )
+                claudeSignal = result.signal
+                updateState(key: key) { state in
+                    state.lastClaudeBarTime = currentBarTime
+                    state.lastClaudeSignal = result.signal
+                }
+                let confPct = String(format: "%.0f%%", result.confidence * 100)
+                logToState(key: key, type: .signal,
+                           message: "Claude: \(result.signal == .buy ? "BUY" : result.signal == .sell ? "SELL" : "NEUTRAL") (\(confPct)) — \(result.reason)")
+            } else {
+                // Same bar — reuse last Claude signal
+                claudeSignal = runStates[key]?.lastClaudeSignal ?? .neutral
+            }
+        }
+
+        // Merge sync + Claude signals with AND logic
+        let signal: Signal
+        let nonNeutral = [syncSignal, claudeSignal].filter { $0 != .neutral }
+        if nonNeutral.isEmpty {
+            signal = .neutral
+        } else if nonNeutral.allSatisfy({ $0 == .buy }) {
+            signal = .buy
+        } else if nonNeutral.allSatisfy({ $0 == .sell }) {
+            signal = .sell
+        } else {
+            signal = .neutral
         }
 
         // Batch all state updates into a single mutation to minimize SwiftUI re-renders
@@ -549,7 +795,7 @@ class BotRunner {
         }
         updateTodayPnL(key: key, bot: bot, lastPrice: lastPrice)
 
-        // Only log signal changes or non-neutral signals to reduce noise
+        // Compact log line
         let signalLabel = signal == .buy ? "BUY" : signal == .sell ? "SELL" : "NEUTRAL"
         let priceSource = signalrPrice != nil && signalrPrice! > 0 ? "SR" : "REST"
         logToState(key: key, type: .signal,
@@ -732,20 +978,37 @@ class BotRunner {
         bot.lifetimeTradeCount += state.todayTradeCount
     }
 
+    // MARK: - Bot Polling Mode
+
+    private enum BotPollingMode {
+        case traditional   // no Claude AI indicator, or Claude + sync indicators (hybrid)
+        case aiOnly        // Claude AI is the ONLY indicator
+    }
+
+    private func pollingMode(for bot: BotConfig) -> BotPollingMode {
+        let hasClaude = bot.indicators.contains { $0.indicatorType == .claudeAI }
+        let hasSync = bot.indicators.contains { $0.indicatorType != .claudeAI }
+        return (hasClaude && !hasSync) ? .aiOnly : .traditional
+    }
+
     // MARK: - Polling Interval
 
-    private func pollingInterval(for bot: BotConfig) -> Double {
-        let secondsPerUnit: [Int: Double] = [
-            1: 1,        // second
-            2: 60,       // minute
-            3: 3600,     // hour
-            4: 86400,    // day
-            5: 604800,   // week
-            6: 2592000   // month
-        ]
+    private static let secondsPerUnit: [Int: Double] = [
+        1: 1,        // second
+        2: 60,       // minute
+        3: 3600,     // hour
+        4: 86400,    // day
+        5: 604800,   // week
+        6: 2592000   // month
+    ]
 
-        let unitSeconds = secondsPerUnit[bot.barUnit] ?? 60
-        let barDuration = unitSeconds * Double(bot.barUnitNumber)
+    private func barDurationSeconds(for bot: BotConfig) -> Double {
+        let unitSeconds = Self.secondsPerUnit[bot.barUnit] ?? 60
+        return unitSeconds * Double(bot.barUnitNumber)
+    }
+
+    private func pollingInterval(for bot: BotConfig) -> Double {
+        let barDuration = barDurationSeconds(for: bot)
         return min(300, max(15, barDuration / 5))
     }
 

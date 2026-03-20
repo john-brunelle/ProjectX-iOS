@@ -47,6 +47,9 @@ struct IndicatorEngine {
             return calculateMA(bars: bars, fastPeriod: fast, slowPeriod: slow, useEMA: useEMA)
         case .timerSignal(let interval, let mode):
             return calculateTimerSignal(intervalSeconds: interval, mode: mode)
+        case .claudeAI:
+            // Claude AI is evaluated asynchronously by BotRunner, not here.
+            return IndicatorResult(signal: .neutral, indicatorType: .claudeAI, values: [:])
         }
     }
 

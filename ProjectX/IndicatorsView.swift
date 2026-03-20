@@ -144,6 +144,11 @@ struct IndicatorEditorView: View {
     @State private var timerInterval: Int = 60
     @State private var timerMode: TimerSignalMode = .alternating
 
+    // Claude AI params
+    @State private var claudeModel: String = "claude-3-5-haiku-latest"
+    @State private var claudeBarCount: Int = 50
+    @State private var claudeCustomPrompt: String = ""
+
     var isEditing: Bool { existing != nil }
 
     var body: some View {
@@ -184,6 +189,8 @@ struct IndicatorEditorView: View {
                         maParametersSection
                     case .timerSignal:
                         timerSignalParametersSection
+                    case .claudeAI:
+                        claudeAIParametersSection
                     }
                 }
 
@@ -268,15 +275,59 @@ struct IndicatorEditorView: View {
         }
     }
 
+    // MARK: Claude AI Parameters
+
+    @ViewBuilder
+    private var claudeAIParametersSection: some View {
+        Picker("Model", selection: $claudeModel) {
+            Text("Haiku 4.5 (Fast, Cheap)").tag("claude-haiku-4-5-20251001")
+            Text("Sonnet 4.6 (Smarter)").tag("claude-sonnet-4-6-20250627")
+        }
+        Stepper("Bars to Send: \(claudeBarCount)", value: $claudeBarCount, in: 10...200, step: 10)
+
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Custom Prompt (optional)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            TextEditor(text: $claudeCustomPrompt)
+                .frame(minHeight: 80)
+                .font(.caption)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color(uiColor: .separator), lineWidth: 0.5)
+                )
+            Text("Add extra instructions for Claude's analysis, e.g. \"Focus on volume divergences\" or \"Only signal reversals near round numbers\"")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+
+        // API key status
+        HStack {
+            Text("API Key")
+                .foregroundStyle(.secondary)
+            Spacer()
+            if ClaudeAIService.shared.hasAPIKey {
+                Label("Configured", systemImage: "checkmark.circle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.green)
+            } else {
+                Label("Not Set — configure in Preferences", systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+        }
+    }
+
     // MARK: Current Parameters (for signal description)
 
     private var currentParameters: IndicatorParameters {
         switch selectedType {
-        case .rsi:  .rsi(period: rsiPeriod, overbought: rsiOverbought, oversold: rsiOversold)
-        case .macd: .macd(fastPeriod: macdFast, slowPeriod: macdSlow, signalPeriod: macdSignal)
-        case .obv:  .obv(smoothingPeriod: obvSmoothing)
+        case .rsi:         .rsi(period: rsiPeriod, overbought: rsiOverbought, oversold: rsiOversold)
+        case .macd:        .macd(fastPeriod: macdFast, slowPeriod: macdSlow, signalPeriod: macdSignal)
+        case .obv:         .obv(smoothingPeriod: obvSmoothing)
         case .ma:          .ma(fastPeriod: maFast, slowPeriod: maSlow, useEMA: maUseEMA)
         case .timerSignal: .timerSignal(intervalSeconds: timerInterval, mode: timerMode)
+        case .claudeAI:    .claudeAI(model: claudeModel, barCount: claudeBarCount, customPrompt: claudeCustomPrompt)
         }
     }
 
@@ -305,6 +356,10 @@ struct IndicatorEditorView: View {
         case .timerSignal(let interval, let mode):
             timerInterval = interval
             timerMode = mode
+        case .claudeAI(let model, let barCount, let customPrompt):
+            claudeModel = model
+            claudeBarCount = barCount
+            claudeCustomPrompt = customPrompt
         }
     }
 
@@ -320,16 +375,19 @@ struct IndicatorEditorView: View {
             maFast = 10; maSlow = 50; maUseEMA = true
         case .timerSignal:
             timerInterval = 60; timerMode = .alternating
+        case .claudeAI:
+            claudeModel = "claude-3-5-haiku-latest"; claudeBarCount = 50; claudeCustomPrompt = ""
         }
     }
 
     private func save() {
         let params: IndicatorParameters = switch selectedType {
-        case .rsi:  .rsi(period: rsiPeriod, overbought: rsiOverbought, oversold: rsiOversold)
-        case .macd: .macd(fastPeriod: macdFast, slowPeriod: macdSlow, signalPeriod: macdSignal)
-        case .obv:  .obv(smoothingPeriod: obvSmoothing)
+        case .rsi:         .rsi(period: rsiPeriod, overbought: rsiOverbought, oversold: rsiOversold)
+        case .macd:        .macd(fastPeriod: macdFast, slowPeriod: macdSlow, signalPeriod: macdSignal)
+        case .obv:         .obv(smoothingPeriod: obvSmoothing)
         case .ma:          .ma(fastPeriod: maFast, slowPeriod: maSlow, useEMA: maUseEMA)
         case .timerSignal: .timerSignal(intervalSeconds: timerInterval, mode: timerMode)
+        case .claudeAI:    .claudeAI(model: claudeModel, barCount: claudeBarCount, customPrompt: claudeCustomPrompt)
         }
 
         let trimmedName = name.trimmingCharacters(in: .whitespaces)

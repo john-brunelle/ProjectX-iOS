@@ -128,15 +128,6 @@ class ProjectXService {
             let duration = Date().timeIntervalSince(start)
             let responseStr = String(data: data, encoding: .utf8)
 
-            if let statusCode {
-                print("ProjectXService [\(path)] HTTP \(statusCode)")
-            }
-            #if DEBUG
-            if let raw = responseStr {
-                print("ProjectXService [\(path)] response: \(raw)")
-            }
-            #endif
-
             NetworkLogger.shared.log(NetworkLogger.Entry(
                 timestamp: start, source: .rest, method: "POST", path: path,
                 statusCode: statusCode, duration: duration,
@@ -146,7 +137,9 @@ class ProjectXService {
             return try JSONDecoder().decode(R.self, from: data)
         } catch {
             let duration = Date().timeIntervalSince(start)
+            #if DEBUG
             print("ProjectXService [\(path)] error: \(error)")
+            #endif
 
             NetworkLogger.shared.log(NetworkLogger.Entry(
                 timestamp: start, source: .rest, method: "POST", path: path,

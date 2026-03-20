@@ -776,9 +776,15 @@ struct BotDetailView: View {
 
     // MARK: - Backtest Sections
 
+    private var isAIOnly: Bool {
+        let hasClaude = bot.indicators.contains { $0.indicatorType == .claudeAI }
+        let hasSync = bot.indicators.contains { $0.indicatorType != .claudeAI }
+        return hasClaude && !hasSync
+    }
+
     @ViewBuilder
     private var backtestSections: some View {
-        if !isRunning {
+        if !isRunning && !isAIOnly {
             Section("Backtest Settings") {
                 Stepper("Days Back: \(daysBack)", value: $daysBack, in: 1...365)
                 Stepper("Bar Limit: \(barLimit)", value: $barLimit, in: 100...20000, step: 100)

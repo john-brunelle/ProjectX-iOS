@@ -97,9 +97,109 @@ struct ControlsView: View {
                     Text("When enabled, stopping a bot will automatically close any open positions and/or cancel pending orders on that contract.")
                 }
 
+                // ── Claude AI ──────────────────────────
+                ClaudeAISettingsSection()
+
             }
             .navigationTitle("Controls")
         }
     }
 
+}
+
+// ── Claude AI Settings Section ────────────────
+
+struct ClaudeAISettingsSection: View {
+    @AppStorage("pref_claude_ai_enabled") private var claudeEnabled = true
+    @AppStorage("pref_claude_daily_spend_limit") private var dailySpendLimit = 10.0
+
+    @State private var apiKeyInput: String = ""
+    @State private var hasKey: Bool = false
+
+    private let service = ClaudeAIService.shared
+
+    var body: some View {
+        Section {
+            Toggle("Enable Claude AI", isOn: $claudeEnabled)
+
+            // API Key
+            if hasKey {
+                HStack {
+                    Label("API Key", systemImage: "key.fill")
+                    Spacer()
+                    Text("••••••••")
+                        .foregroundStyle(.secondary)
+                    Button(role: .destructive) {
+                        service.deleteAPIKey()
+                        hasKey = false
+                        apiKeyInput = ""
+                    } label: {
+                        Text("Remove")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.borderless)
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    SecureField("Anthropic API Key", text: $apiKeyInput)
+                        .textContentType(.password)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                    if !apiKeyInput.isEmpty {
+                        Button("Save API Key") {
+                            service.saveAPIKey(apiKeyInput.trimmingCharacters(in: .whitespaces))
+                            hasKey = true
+                            apiKeyInput = ""
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                    }
+                }
+            }
+
+            // Daily spend limit
+            HStack {
+                Text("Daily Spend Limit")
+                Spacer()
+                TextField("Limit", value: $dailySpendLimit, format: .currency(code: "USD"))
+                    .keyboardType(.decimalPad)
+                    .multilineTextAlignment(.trailing)
+                    .frame(width: 100)
+            }
+
+            // Today's usage
+            HStack {
+                Text("Today's Estimated Spend")
+                    .foregroundStyle(.secondary)
+                Spacer()
+                let spend = service.estimatedDailySpend
+                Text(spend, format: .currency(code: "USD"))
+                    .foregroundStyle(spend >= dailySpendLimit ? .red : .secondary)
+            }
+
+            HStack {
+                Text("Tokens Today")
+                    .foregroundStyle(.secondary)
+                    .font(.caption)
+                Spacer()
+                Text("In: \(service.todayInputTokens.formatted())  Out: \(service.todayOutputTokens.formatted())")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+
+            if service.estimatedDailySpend > 0 {
+                Button("Reset Daily Usage") {
+                    service.resetDailySpend()
+                }
+                .font(.caption)
+            }
+        } header: {
+            Text("Claude AI")
+        } footer: {
+            Text("Claude AI indicators send bar data to Anthropic's API for AI-powered signal analysis. Requires an API key from console.anthropic.com. Costs vary by model — Haiku ~$0.002/call, Sonnet ~$0.009/call.")
+        }
+        .onAppear {
+            hasKey = service.hasAPIKey
+        }
+    }
 }

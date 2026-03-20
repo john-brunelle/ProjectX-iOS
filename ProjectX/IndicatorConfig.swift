@@ -16,16 +16,18 @@ enum IndicatorType: String, Codable, CaseIterable, Identifiable {
     case obv
     case ma
     case timerSignal
+    case claudeAI
 
     var id: String { rawValue }
 
     var displayName: String {
         switch self {
-        case .rsi:  "RSI"
-        case .macd: "MACD"
-        case .obv:  "OBV"
+        case .rsi:         "RSI"
+        case .macd:        "MACD"
+        case .obv:         "OBV"
         case .ma:          "MA"
         case .timerSignal: "Timer Signal"
+        case .claudeAI:    "Claude AI"
         }
     }
 
@@ -36,6 +38,7 @@ enum IndicatorType: String, Codable, CaseIterable, Identifiable {
         case .obv:         "chart.bar.xaxis"
         case .ma:          "line.diagonal"
         case .timerSignal: "timer"
+        case .claudeAI:    "brain.head.profile"
         }
     }
 
@@ -46,6 +49,7 @@ enum IndicatorType: String, Codable, CaseIterable, Identifiable {
         case .obv:         "Volume"
         case .ma:          "Trend"
         case .timerSignal: "Debug"
+        case .claudeAI:    "AI"
         }
     }
 
@@ -56,6 +60,7 @@ enum IndicatorType: String, Codable, CaseIterable, Identifiable {
         case .obv:         .defaultOBV()
         case .ma:          .defaultMA()
         case .timerSignal: .defaultTimerSignal()
+        case .claudeAI:    .defaultClaudeAI()
         }
     }
 
@@ -92,6 +97,7 @@ enum IndicatorParameters: Codable, Equatable {
     case obv(smoothingPeriod: Int)
     case ma(fastPeriod: Int, slowPeriod: Int, useEMA: Bool)
     case timerSignal(intervalSeconds: Int, mode: TimerSignalMode)
+    case claudeAI(model: String, barCount: Int, customPrompt: String)
 
     // MARK: Defaults
 
@@ -115,6 +121,10 @@ enum IndicatorParameters: Codable, Equatable {
         .timerSignal(intervalSeconds: 60, mode: .alternating)
     }
 
+    static func defaultClaudeAI() -> IndicatorParameters {
+        .claudeAI(model: "claude-haiku-4-5-20251001", barCount: 50, customPrompt: "")
+    }
+
     // MARK: Summary
 
     var summary: String {
@@ -129,6 +139,8 @@ enum IndicatorParameters: Codable, Equatable {
             "\(useEMA ? "EMA" : "SMA") Fast: \(fast), Slow: \(slow)"
         case .timerSignal(let interval, let mode):
             "Interval: \(interval)s, \(mode.displayName)"
+        case .claudeAI(let model, let barCount, _):
+            "\(model.contains("haiku") ? "Haiku 4.5" : "Sonnet 4"), \(barCount) bars"
         }
     }
 
@@ -157,6 +169,10 @@ enum IndicatorParameters: Codable, Equatable {
             case .shortOnly:
                 return "Sends SELL signal every \(interval) seconds. For testing only."
             }
+        case .claudeAI(let model, let barCount, _):
+            let modelName = model.contains("haiku") ? "Haiku 4.5" : "Sonnet 4"
+            return "Sends \(barCount) raw OHLCV bars to Claude \(modelName) for AI-powered pattern " +
+            "recognition. Returns BUY, SELL, or NEUTRAL with confidence and reasoning."
         }
     }
 }
