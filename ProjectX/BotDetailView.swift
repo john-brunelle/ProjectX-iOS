@@ -64,9 +64,14 @@ struct BotDetailView: View {
     @State private var atrBarCount = 50
     @State private var showATRInfo = false
     @State private var atrMultiplier: Double = 1.5
+    @State private var atrTPMultiplier: Double = 2.0
+
+    // ── Bar size expand/collapse ──
+    @State private var showBarSizeDetail = false
 
     // ── Other UI state ──
     @State private var showArchiveConfirmation = false
+    @State private var showDeleteConfirmation = false
     @State private var showClearLogConfirmation = false
     @State private var showResetPnLConfirmation = false
     @State private var showTradeHistory = false
@@ -157,6 +162,23 @@ struct BotDetailView: View {
             } message: {
                 Text("Archive \"\(bot.name)\"? It will be hidden from the dashboard but kept in your bot library.")
             }
+            .confirmationDialog("Permanently Delete Bot?", isPresented: $showDeleteConfirmation) {
+                Button("Delete", role: .destructive) {
+                    botRunner.stopAllInstances(of: bot)
+                    for assignment in allAssignments where assignment.botId == bot.id {
+                        modelContext.delete(assignment)
+                    }
+                    for (key, _) in botRunner.runStates where key.botId == bot.id {
+                        botRunner.clearLog(for: key.botId, accountId: key.accountId)
+                    }
+                    modelContext.delete(bot)
+                    try? modelContext.save()
+                    dismiss()
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This will permanently remove \"\(bot.name)\" and all its data. This cannot be undone.")
+            }
             .onAppear { loadFromBot() }
         }
     }
@@ -200,8 +222,10 @@ struct BotDetailView: View {
                 .shadow(color: .black.opacity(0.12), radius: 8, y: 4)
 
                 VStack(spacing: 4) {
-                    Text(bot.name)
+                    TextField("Bot Name", text: $name)
                         .font(.title2.weight(.semibold))
+                        .multilineTextAlignment(.center)
+                        .disabled(isRunning)
                     Text(bot.contractName)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -386,8 +410,8 @@ struct BotDetailView: View {
 
     @ViewBuilder
     private var configSections: some View {
-        Section("Configuration") {
-            TextField("Bot Name", text: $name)
+        Section("Contract") {
+            Stepper("Quantity: \(quantity)", value: $quantity, in: 1...100)
                 .disabled(isRunning)
 
             HStack {
@@ -395,26 +419,44 @@ struct BotDetailView: View {
                 Spacer()
                 Text(contractName.isEmpty ? bot.contractName : contractName)
                     .foregroundStyle(isRunning ? .secondary : .primary)
-            }
-
-            if !isRunning {
-                Button("Change Contract…") {
-                    showContractSearch = true
-                }
-                .font(.callout)
-            }
-        }
-
-        Section("Bar Size") {
-            Picker("Bar Unit", selection: $barUnit) {
-                ForEach(BarUnit.allCases) { unit in
-                    Text(unit.label).tag(unit)
+                if !isRunning {
+                    Image(systemName: "chevron.right")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
                 }
             }
-            .disabled(isRunning)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                guard !isRunning else { return }
+                showContractSearch = true
+            }
 
-            Stepper("Time Value: \(barUnitNumber)", value: $barUnitNumber, in: 1...60)
+            HStack {
+                Text("Bar Size").foregroundStyle(.secondary)
+                Spacer()
+                Text("\(barUnitNumber) \(barUnit.label)")
+                    .foregroundStyle(isRunning ? .secondary : .primary)
+                Image(systemName: showBarSizeDetail ? "chevron.up" : "chevron.down")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                withAnimation { showBarSizeDetail.toggle() }
+            }
+
+            if showBarSizeDetail {
+                Picker("Bar Unit", selection: $barUnit) {
+                    ForEach(BarUnit.allCases) { unit in
+                        Text(unit.label).tag(unit)
+                    }
+                }
+                .pickerStyle(.segmented)
                 .disabled(isRunning)
+
+                Stepper("Value: \(barUnitNumber)", value: $barUnitNumber, in: 1...60)
+                    .disabled(isRunning)
+            }
         }
     }
 
@@ -422,115 +464,152 @@ struct BotDetailView: View {
 
     @ViewBuilder
     private var riskSections: some View {
-        Section("Position Size") {
-            Stepper("Quantity: \(quantity)", value: $quantity, in: 1...100)
-                .disabled(isRunning)
-        }
-
-        Section("Stop Loss") {
-            if isRunning {
-                HStack {
-                    Text("Stop Loss")
-                    Spacer()
-                    Text(useStopLoss ? "\(stopLossTicks) ticks" : "Off")
-                        .foregroundStyle(useStopLoss ? .primary : .secondary)
-                }
-            } else {
-                Toggle("Enable Stop Loss", isOn: $useStopLoss)
-                if useStopLoss {
-                    Stepper("Ticks: \(stopLossTicks)", value: $stopLossTicks, in: 1...500)
-                }
-            }
-            Button {
-                withAnimation { showATR.toggle() }
-            } label: {
+        Section {
+            // ── ATR Tool ──────────────────────────
+            VStack(spacing: 0) {
+                // ATR header row — always visible
                 HStack {
                     Image(systemName: "function")
+                        .foregroundStyle(.blue)
                     Text("ATR Tool")
-                    Spacer()
-                    Image(systemName: showATR ? "chevron.up" : "chevron.down")
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-
-        if showATR {
-            Section {
-                Stepper("Bars: \(atrBarCount)", value: $atrBarCount, in: 20...200, step: 10)
-
-                if isCalculatingATR {
-                    HStack {
-                        ProgressView()
-                        Text("Calculating...")
-                            .foregroundStyle(.secondary)
-                    }
-                } else if let atrTicks {
-                    let tick = botRunner.contractTickInfo[bot.contractId]
-                    let tickValue = tick?.tickValue ?? 0
-                    HStack {
-                        Text("ATR")
-                        Spacer()
-                        if tickValue > 0 {
-                            Text("\(String(format: "%.1f", atrTicks)) ticks (\(String(format: "$%.2f", atrTicks * tickValue)))")
-                                .fontWeight(.semibold)
-                        } else {
-                            Text("\(String(format: "%.1f", atrTicks)) ticks")
-                                .fontWeight(.semibold)
-                        }
-                    }
-
-                    let stopTicks = Int(round(atrMultiplier * atrTicks))
-                    Stepper("Multiplier: \(String(format: "%.1f", atrMultiplier))x", value: $atrMultiplier, in: 0.5...5.0, step: 0.5)
-                    Button("Set Stop Loss to \(stopTicks) ticks") {
-                        useStopLoss = true
-                        stopLossTicks = max(1, stopTicks)
-                    }
-                    .disabled(isRunning)
-
-                    Button("Refresh") {
-                        Task { await calculateATR() }
-                    }
-                    .font(.caption)
-                } else {
-                    Button("Calculate ATR") {
-                        Task { await calculateATR() }
-                    }
-                }
-            } header: {
-                HStack {
-                    Text("ATR Tool")
+                        .font(.subheadline.weight(.semibold))
                     Button {
                         showATRInfo = true
                     } label: {
                         Image(systemName: "info.circle")
                             .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    Spacer()
+                    if let atrTicks {
+                        let tick = botRunner.contractTickInfo[bot.contractId]
+                        let tickValue = tick?.tickValue ?? 0
+                        if tickValue > 0 {
+                            Text("\(String(format: "%.1f", atrTicks)) ticks (\(String(format: "$%.2f", atrTicks * tickValue)))")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.blue)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(.blue.opacity(0.12), in: Capsule())
+                        } else {
+                            Text("\(String(format: "%.1f", atrTicks)) ticks")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.blue)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(.blue.opacity(0.12), in: Capsule())
+                        }
+                    }
+                    Image(systemName: showATR ? "chevron.up" : "chevron.down")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    withAnimation { showATR.toggle() }
+                }
+
+                // ATR detail — expandable
+                if showATR {
+                    Divider().padding(.vertical, 8)
+
+                    VStack(spacing: 10) {
+                        HStack {
+                            Stepper("Bars: \(atrBarCount)", value: $atrBarCount, in: 20...200, step: 10)
+                            Button {
+                                Task { await calculateATR() }
+                            } label: {
+                                Image(systemName: "arrow.clockwise")
+                                    .font(.caption.weight(.semibold))
+                            }
+                            .buttonStyle(.bordered)
+                            .tint(.blue)
+                        }
+
+                        if isCalculatingATR {
+                            HStack {
+                                ProgressView()
+                                Text("Calculating...")
+                                    .foregroundStyle(.secondary)
+                            }
+                        } else if let atrTicks {
+                            // TP multiplier
+                            let tpTicks = Int(round(atrTPMultiplier * atrTicks))
+                            Stepper("TP Multiplier: \(String(format: "%.1f", atrTPMultiplier))x → \(tpTicks)t",
+                                    value: $atrTPMultiplier, in: 0.5...5.0, step: 0.5)
+
+                            // SL multiplier
+                            let slTicks = Int(round(atrMultiplier * atrTicks))
+                            Stepper("SL Multiplier: \(String(format: "%.1f", atrMultiplier))x → \(slTicks)t",
+                                    value: $atrMultiplier, in: 0.5...5.0, step: 0.5)
+
+                            // Single apply button
+                            Button {
+                                useTakeProfit = true
+                                takeProfitTicks = max(1, tpTicks)
+                                useStopLoss = true
+                                stopLossTicks = max(1, slTicks)
+                            } label: {
+                                Label("Apply to TP & SL", systemImage: "checkmark.circle.fill")
+                                    .font(.caption.weight(.medium))
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.bordered)
+                            .tint(.blue)
+                            .disabled(isRunning)
+                        } else {
+                            Button {
+                                Task { await calculateATR() }
+                            } label: {
+                                Label("Calculate ATR", systemImage: "play.fill")
+                                    .font(.caption.weight(.medium))
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.bordered)
+                            .tint(.blue)
+                        }
                     }
                 }
             }
+            .padding(.vertical, 4)
             .alert("Average True Range (ATR)", isPresented: $showATRInfo) {
                 Button("OK", role: .cancel) {}
             } message: {
                 Text("ATR measures market volatility by averaging the true range of price bars over 14 periods. The true range is the greatest of: current high minus low, absolute value of high minus previous close, or absolute value of low minus previous close.\n\nUse ATR to help set stop loss and take profit levels. A common approach is setting stops at 1-2x ATR from your entry price.")
             }
-        }
 
-        Section("Take Profit") {
+            // ── Take Profit ───────────────────────
             if isRunning {
                 HStack {
-                    Text("Take Profit")
+                    Text("Take Profit").foregroundStyle(.secondary)
                     Spacer()
                     Text(useTakeProfit ? "\(takeProfitTicks) ticks" : "Off")
                         .foregroundStyle(useTakeProfit ? .primary : .secondary)
                 }
             } else {
-                Toggle("Enable Take Profit", isOn: $useTakeProfit)
+                Toggle("Take Profit", isOn: $useTakeProfit)
                 if useTakeProfit {
-                    Stepper("Ticks: \(takeProfitTicks)", value: $takeProfitTicks, in: 1...500)
+                    Stepper("TP Ticks: \(takeProfitTicks)", value: $takeProfitTicks, in: 1...500)
                 }
             }
-        }
 
-        Section("Trade Direction") {
+            // ── Stop Loss ─────────────────────────
+            if isRunning {
+                HStack {
+                    Text("Stop Loss").foregroundStyle(.secondary)
+                    Spacer()
+                    Text(useStopLoss ? "\(stopLossTicks) ticks" : "Off")
+                        .foregroundStyle(useStopLoss ? .primary : .secondary)
+                }
+            } else {
+                Toggle("Stop Loss", isOn: $useStopLoss)
+                if useStopLoss {
+                    Stepper("SL Ticks: \(stopLossTicks)", value: $stopLossTicks, in: 1...500)
+                }
+            }
+
+            // ── Trade Direction ───────────────────
             Picker("Direction", selection: $tradeDirection) {
                 ForEach(TradeDirectionFilter.allCases) { dir in
                     Text(dir.displayName).tag(dir)
@@ -538,6 +617,8 @@ struct BotDetailView: View {
             }
             .pickerStyle(.segmented)
             .disabled(isRunning)
+        } header: {
+            Text("Risk Management")
         }
     }
 
@@ -545,10 +626,23 @@ struct BotDetailView: View {
 
     @ViewBuilder
     private var indicatorSections: some View {
-        Section("Indicators (\(selectedIndicatorIDs.count))") {
+        Section {
             if selectedIndicatorsList.isEmpty {
-                Text("No indicators selected")
-                    .foregroundStyle(.secondary)
+                if !isRunning {
+                    Button {
+                        showIndicatorPicker = true
+                    } label: {
+                        Label("Add Indicators", systemImage: "plus.circle.fill")
+                            .font(.subheadline.weight(.medium))
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.blue)
+                    .padding(.vertical, 4)
+                } else {
+                    Text("No indicators selected")
+                        .foregroundStyle(.secondary)
+                }
             } else {
                 ForEach(selectedIndicatorsList) { indicator in
                     HStack {
@@ -582,12 +676,17 @@ struct BotDetailView: View {
                     }
                 }
             }
-
-            if !isRunning {
-                Button {
-                    showIndicatorPicker = true
-                } label: {
-                    Label("Add / Remove Indicators", systemImage: "plus.circle")
+        } header: {
+            HStack {
+                Text("Indicators (\(selectedIndicatorIDs.count))")
+                Spacer()
+                if !selectedIndicatorsList.isEmpty && !isRunning {
+                    Button {
+                        showIndicatorPicker = true
+                    } label: {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.title3)
+                    }
                 }
             }
         }
@@ -630,6 +729,12 @@ struct BotDetailView: View {
                     try? modelContext.save()
                 } label: {
                     Label("Unarchive Bot", systemImage: "arrow.uturn.backward")
+                }
+
+                Button(role: .destructive) {
+                    showDeleteConfirmation = true
+                } label: {
+                    Label("Delete Bot", systemImage: "trash")
                 }
             } else {
                 Button(role: .destructive) {
@@ -865,12 +970,10 @@ struct BotDetailView: View {
     @ViewBuilder
     private var backtestSections: some View {
         if !isRunning && !isAIOnly {
-            Section("Backtest Settings") {
+            Section {
                 Stepper("Days Back: \(daysBack)", value: $daysBack, in: 1...365)
                 Stepper("Bar Limit: \(barLimit)", value: $barLimit, in: 100...20000, step: 100)
-            }
 
-            Section {
                 Button {
                     Task { await runBacktest() }
                 } label: {
@@ -881,24 +984,27 @@ struct BotDetailView: View {
                                 .padding(.trailing, 8)
                             Text("Running Backtest…")
                         } else {
-                            Label("Run Backtest", systemImage: "play.fill")
+                            Label(backtestResult != nil ? "Re-run Backtest" : "Run Backtest",
+                                  systemImage: "play.fill")
                         }
                         Spacer()
                     }
                     .font(.headline)
                 }
                 .disabled(selectedIndicatorsList.isEmpty || isBacktesting)
-
-                if backtestResult != nil {
-                    Button(role: .destructive) {
-                        backtestResult = nil
-                        backtestError = nil
-                        backtestBarCount = 0
-                    } label: {
-                        HStack {
-                            Spacer()
-                            Label("Clear Results", systemImage: "xmark.circle")
-                            Spacer()
+            } header: {
+                HStack {
+                    Text("Backtest")
+                    Spacer()
+                    if backtestResult != nil {
+                        Button {
+                            backtestResult = nil
+                            backtestError = nil
+                            backtestBarCount = 0
+                        } label: {
+                            Label("Clear", systemImage: "xmark.circle")
+                                .font(.caption)
+                                .foregroundStyle(.red)
                         }
                     }
                 }
@@ -924,36 +1030,33 @@ struct BotDetailView: View {
 
     @ViewBuilder
     private func backtestResultSections(_ result: BacktestResult) -> some View {
-        Section {
+        Section("Backtest Report") {
             Text("Analyzed \(backtestBarCount) bars — \(result.trades.count) trades found")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-        }
-
-        Section("Backtest Summary") {
-            let stats = result.statistics
             backtestStatRow("Total P&L",
-                            value: formatCurrency(stats.totalPnL),
-                            color: stats.totalPnL >= 0 ? .green : .red)
-            backtestStatRow("Total Trades", value: "\(stats.totalTrades)")
+                            value: formatCurrency(result.statistics.totalPnL),
+                            color: result.statistics.totalPnL >= 0 ? .green : .red)
+            backtestStatRow("Total Trades", value: "\(result.statistics.totalTrades)")
             backtestStatRow("Win Rate",
-                            value: formatPercent(stats.winRate),
-                            color: stats.winRate >= 0.5 ? .green : .red)
+                            value: formatPercent(result.statistics.winRate),
+                            color: result.statistics.winRate >= 0.5 ? .green : .red)
             backtestStatRow("Longs",
-                            value: "\(stats.longTrades) — \(formatPercent(stats.longWinRate)) win",
-                            color: stats.longWinRate >= 0.5 ? .green : .red)
+                            value: "\(result.statistics.longTrades) — \(formatPercent(result.statistics.longWinRate)) win",
+                            color: result.statistics.longWinRate >= 0.5 ? .green : .red)
             backtestStatRow("Shorts",
-                            value: "\(stats.shortTrades) — \(formatPercent(stats.shortWinRate)) win",
-                            color: stats.shortWinRate >= 0.5 ? .green : .red)
-            backtestStatRow("Profit Factor", value: formatDecimal(stats.profitFactor))
+                            value: "\(result.statistics.shortTrades) — \(formatPercent(result.statistics.shortWinRate)) win",
+                            color: result.statistics.shortWinRate >= 0.5 ? .green : .red)
+            backtestStatRow("Profit Factor", value: formatDecimal(result.statistics.profitFactor))
             backtestStatRow("Max Drawdown",
-                            value: formatCurrency(stats.maxDrawdown),
+                            value: formatCurrency(result.statistics.maxDrawdown),
                             color: .red)
-            backtestStatRow("Sharpe Ratio", value: formatDecimal(stats.sharpeRatio))
-            backtestStatRow("Avg Win", value: formatCurrency(stats.averageWin), color: .green)
-            backtestStatRow("Avg Loss", value: formatCurrency(stats.averageLoss), color: .red)
-            backtestStatRow("Largest Win", value: formatCurrency(stats.largestWin), color: .green)
-            backtestStatRow("Largest Loss", value: formatCurrency(stats.largestLoss), color: .red)
+            backtestStatRow("Sharpe Ratio", value: formatDecimal(result.statistics.sharpeRatio))
+            backtestStatRow("Avg Win", value: formatCurrency(result.statistics.averageWin), color: .green)
+            backtestStatRow("Avg Loss", value: formatCurrency(result.statistics.averageLoss), color: .red)
+            backtestStatRow("Largest Win", value: formatCurrency(result.statistics.largestWin), color: .green)
+            backtestStatRow("Largest Loss", value: formatCurrency(result.statistics.largestLoss), color: .red)
+            backtestStatRow("Avg Duration", value: formatDuration(result.statistics.averageTradeDuration))
         }
 
         Section("Backtest Trades (\(result.trades.count))") {
@@ -1096,6 +1199,23 @@ struct BotDetailView: View {
     private func formatDecimal(_ value: Double) -> String {
         if value.isInfinite { return "∞" }
         return String(format: "%.2f", value)
+    }
+
+    private func formatDuration(_ seconds: TimeInterval) -> String {
+        let totalSeconds = Int(seconds)
+        let secs = totalSeconds % 60
+        let totalMinutes = totalSeconds / 60
+        let mins = totalMinutes % 60
+        let hours = totalMinutes / 60
+        if hours == 0 {
+            return "\(mins)m \(secs)s"
+        }
+        if hours < 24 {
+            return "\(hours)h \(mins)m \(secs)s"
+        }
+        let days = hours / 24
+        let remainingHours = hours % 24
+        return "\(days)d \(remainingHours)h \(mins)m \(secs)s"
     }
 
     // MARK: - Load / Save
@@ -1432,9 +1552,12 @@ struct BacktestTradeRow: View {
             }
 
             HStack {
-                Text(trade.entryTimestamp)
+                Text(formatTimestamp(trade.entryTimestamp))
                 Text("→")
-                Text(trade.exitTimestamp)
+                Text(formatTimestamp(trade.exitTimestamp))
+                if let duration = tradeDuration {
+                    Text("(\(formatDuration(duration)) · \(trade.barCount) bar\(trade.barCount == 1 ? "" : "s"))")
+                }
             }
             .font(.caption2)
             .foregroundStyle(.tertiary)
@@ -1444,6 +1567,39 @@ struct BacktestTradeRow: View {
 
     private func formatPrice(_ price: Double) -> String {
         String(format: "%.2f", price)
+    }
+
+    private var tradeDuration: TimeInterval? {
+        guard let entry = BacktestEngine.parseTimestamp(trade.entryTimestamp),
+              let exit = BacktestEngine.parseTimestamp(trade.exitTimestamp) else { return nil }
+        return exit.timeIntervalSince(entry)
+    }
+
+    private func formatTimestamp(_ raw: String) -> String {
+        if let date = BacktestEngine.parseTimestamp(raw) {
+            let formatter = DateFormatter()
+            formatter.dateStyle = .short
+            formatter.timeStyle = .short
+            return formatter.string(from: date)
+        }
+        return raw
+    }
+
+    private func formatDuration(_ seconds: TimeInterval) -> String {
+        let totalSeconds = Int(seconds)
+        let secs = totalSeconds % 60
+        let totalMinutes = totalSeconds / 60
+        let mins = totalMinutes % 60
+        let hours = totalMinutes / 60
+        if hours == 0 {
+            return "\(mins)m \(secs)s"
+        }
+        if hours < 24 {
+            return "\(hours)h \(mins)m \(secs)s"
+        }
+        let days = hours / 24
+        let remainingHours = hours % 24
+        return "\(days)d \(remainingHours)h \(mins)m \(secs)s"
     }
 }
 

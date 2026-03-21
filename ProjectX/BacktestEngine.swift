@@ -38,6 +38,7 @@ struct BacktestTrade: Identifiable {
     let exitReason: ExitReason
     let pnlTicks: Double
     let pnlDollars: Double
+    var barCount: Int { exitBarIndex - entryBarIndex }
 }
 
 struct BacktestStatistics {
@@ -59,6 +60,9 @@ struct BacktestStatistics {
     let longWinRate: Double
     let shortTrades: Int
     let shortWinRate: Double
+
+    // Duration
+    let averageTradeDuration: TimeInterval
 }
 
 struct BacktestResult {
@@ -113,8 +117,8 @@ struct BacktestEngine {
         for i in 0..<bars.count {
             let bar = bars[i]
 
-            // ── Step 1: Check exits if in position ──
-            if let pos = position {
+            // ── Step 1: Check exits if in position (skip the entry bar) ──
+            if let pos = position, i > pos.entryBarIndex {
                 if let exitResult = checkExit(position: pos, bar: bar, barIndex: i, parameters: parameters) {
                     trades.append(exitResult)
                     position = nil
@@ -309,6 +313,14 @@ struct BacktestEngine {
         let longWins = longs.filter { $0.pnlDollars > 0 }.count
         let shortWins = shorts.filter { $0.pnlDollars > 0 }.count
 
+        // Average trade duration
+        let durations: [TimeInterval] = trades.compactMap { trade in
+            guard let entry = parseTimestamp(trade.entryTimestamp),
+                  let exit = parseTimestamp(trade.exitTimestamp) else { return nil }
+            return exit.timeIntervalSince(entry)
+        }
+        let avgDuration = durations.isEmpty ? 0 : durations.reduce(0, +) / Double(durations.count)
+
         return BacktestStatistics(
             totalTrades: trades.count,
             winningTrades: winners.count,
@@ -325,8 +337,16 @@ struct BacktestEngine {
             longTrades: longs.count,
             longWinRate: longs.isEmpty ? 0 : Double(longWins) / Double(longs.count),
             shortTrades: shorts.count,
-            shortWinRate: shorts.isEmpty ? 0 : Double(shortWins) / Double(shorts.count)
+            shortWinRate: shorts.isEmpty ? 0 : Double(shortWins) / Double(shorts.count),
+            averageTradeDuration: avgDuration
         )
+    }
+
+    static func parseTimestamp(_ raw: String) -> Date? {
+        let isoFrac = ISO8601DateFormatter()
+        isoFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = isoFrac.date(from: raw) { return date }
+        return ISO8601DateFormatter().date(from: raw)
     }
 
     private static func maxDrawdown(equityCurve: [Double]) -> Double {
@@ -357,7 +377,8 @@ struct BacktestEngine {
             maxDrawdown: 0, sharpeRatio: 0, profitFactor: 0,
             largestWin: 0, largestLoss: 0,
             longTrades: 0, longWinRate: 0,
-            shortTrades: 0, shortWinRate: 0
+            shortTrades: 0, shortWinRate: 0,
+            averageTradeDuration: 0
         )
     }
 }
