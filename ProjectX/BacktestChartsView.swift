@@ -63,23 +63,15 @@ struct BacktestChartsView: View {
             Text(finalValue, format: .currency(code: "USD").precision(.fractionLength(0)))
                 .font(.caption.weight(.bold))
                 .foregroundStyle(finalValue >= 0 ? .green : .red)
-            let runs = buildEquityRuns(from: data)
             Chart {
+                // Background zones: green above $0, red below
+                RectangleMark(yStart: .value("y", 0), yEnd: .value("y", maxVal + padding))
+                    .foregroundStyle(.green.opacity(0.06))
+                RectangleMark(yStart: .value("y", minVal - padding), yEnd: .value("y", 0))
+                    .foregroundStyle(.red.opacity(0.06))
                 RuleMark(y: .value("Zero", 0))
                     .foregroundStyle(.secondary.opacity(0.3))
                     .lineStyle(StrokeStyle(dash: [4, 4]))
-                // Area fills — one continuous series per run
-                ForEach(runs.indices, id: \.self) { runIdx in
-                    let run = runs[runIdx]
-                    ForEach(run.points.indices, id: \.self) { ptIdx in
-                        AreaMark(
-                            x: .value("Trade", run.points[ptIdx].x),
-                            y: .value("P&L", run.points[ptIdx].value),
-                            series: .value("run", runIdx)
-                        )
-                        .foregroundStyle(run.isNegative ? .red.opacity(0.15) : .green.opacity(0.15))
-                    }
-                }
                 // Line segments
                 ForEach(0..<max(data.count - 1, 0), id: \.self) { i in
                     let startValue = data[i].value
@@ -102,6 +94,7 @@ struct BacktestChartsView: View {
                     .lineStyle(StrokeStyle(lineWidth: 2.5))
                 }
             }
+            .chartXScale(domain: 0...(data.last?.x ?? 1))
             .chartYScale(domain: (minVal - padding)...(maxVal + padding))
             .chartYAxis { currencyAxis }
             .chartXAxisLabel("Trade #")
@@ -351,11 +344,16 @@ struct BacktestChartsView: View {
                     }
                 }
             }
-            directionLineChart(longData: longData, shortData: shortData)
+            let allValues = curves.long + curves.short
+            let minY = allValues.min() ?? 0
+            let maxY = allValues.max() ?? 0
+            let yPad = max(abs(maxY - minY) * 0.05, 1)
+            let maxX = max(longData.count, shortData.count)
+            directionLineChart(longData: longData, shortData: shortData, maxX: maxX, minY: minY - yPad, maxY: maxY + yPad)
         }
     }
 
-    private func directionLineChart(longData: [(offset: Int, element: Double)], shortData: [(offset: Int, element: Double)]) -> some View {
+    private func directionLineChart(longData: [(offset: Int, element: Double)], shortData: [(offset: Int, element: Double)], maxX: Int, minY: Double, maxY: Double) -> some View {
         Chart {
             RuleMark(y: .value("Zero", 0))
                 .foregroundStyle(.secondary.opacity(0.3))
@@ -373,6 +371,8 @@ struct BacktestChartsView: View {
                     .interpolationMethod(.catmullRom)
             }
         }
+        .chartXScale(domain: 1...max(maxX, 1))
+        .chartYScale(domain: minY...maxY)
         .chartYAxis { currencyAxis }
         .chartXAxisLabel("Trade #")
         .chartForegroundStyleScale(["Long": .green, "Short": .red])

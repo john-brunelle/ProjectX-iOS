@@ -52,6 +52,9 @@ struct BotDetailView: View {
     // ── Backtest state ──
     @State private var daysBack = 30
     @State private var barLimit = 5000
+    @State private var rthOnly = false
+    @State private var rthStartTime = Calendar.current.date(from: DateComponents(hour: 9, minute: 30))!
+    @State private var rthEndTime = Calendar.current.date(from: DateComponents(hour: 16, minute: 0))!
     @State private var isBacktesting = false
     @State private var backtestResult: BacktestResult?
     @State private var backtestError: String?
@@ -978,6 +981,13 @@ struct BotDetailView: View {
     private var backtestSections: some View {
         if !isRunning && !isAIOnly {
             Section {
+                Toggle("RTH Only", isOn: $rthOnly)
+                if rthOnly {
+                    DatePicker("Start", selection: $rthStartTime, displayedComponents: .hourAndMinute)
+                        .environment(\.locale, Locale(identifier: "en_US"))
+                    DatePicker("End", selection: $rthEndTime, displayedComponents: .hourAndMinute)
+                        .environment(\.locale, Locale(identifier: "en_US"))
+                }
                 Stepper("Days Back: \(daysBack)", value: $daysBack, in: 1...365)
                 Stepper("Bar Limit: \(barLimit)", value: $barLimit, in: 100...20000, step: 100)
 
@@ -1069,13 +1079,21 @@ struct BotDetailView: View {
         // ── Equity Curve Chart ──────────────
         if !result.equityCurve.isEmpty {
             Section("Equity Curve") {
-                Button {
-                    showBacktestCharts = true
-                } label: {
-                    Label("View All Charts", systemImage: "chart.xyaxis.line")
-                        .font(.caption.weight(.medium))
-                }
                 inlineEquityCurve(result: result)
+                HStack {
+                    Spacer()
+                    Button {
+                        showBacktestCharts = true
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text("View All Charts")
+                            Image(systemName: "chevron.right")
+                        }
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.blue)
+                    }
+                    .buttonStyle(.plain)
+                }
             }
         }
 
@@ -1159,17 +1177,32 @@ struct BotDetailView: View {
             return
         }
 
-        let bars = await service.retrieveBarsForConfig(
+        let allBars = await service.retrieveBarsForConfig(
             contractId: contractId,
             barUnit: barUnit,
             barUnitNumber: barUnitNumber,
             daysBack: daysBack,
             limit: barLimit
         )
+
+        // Apply RTH filter if enabled
+        let bars: [Bar] = rthOnly ? {
+            let cal = Calendar.current
+            let startMin = cal.component(.hour, from: rthStartTime) * 60 + cal.component(.minute, from: rthStartTime)
+            let endMin = cal.component(.hour, from: rthEndTime) * 60 + cal.component(.minute, from: rthEndTime)
+            return allBars.filter { bar in
+                guard let date = BacktestEngine.parseTimestamp(bar.t) else { return true }
+                let barMin = cal.component(.hour, from: date) * 60 + cal.component(.minute, from: date)
+                return barMin >= startMin && barMin < endMin
+            }
+        }() : allBars
+
         backtestBarCount = bars.count
 
         guard !bars.isEmpty else {
-            backtestError = "No bars returned for the selected configuration."
+            backtestError = rthOnly
+                ? "No bars found within the RTH window for the selected configuration."
+                : "No bars returned for the selected configuration."
             isBacktesting = false
             return
         }
@@ -1260,23 +1293,15 @@ struct BotDetailView: View {
     }
 
     private func inlineEquityCurveChart(data: [InlineEquityPoint], minVal: Double, maxVal: Double, padding: Double) -> some View {
-        let runs = buildInlineEquityRuns(from: data)
         return Chart {
+            // Background zones: green above $0, red below
+            RectangleMark(yStart: .value("y", 0), yEnd: .value("y", maxVal + padding))
+                .foregroundStyle(.green.opacity(0.06))
+            RectangleMark(yStart: .value("y", minVal - padding), yEnd: .value("y", 0))
+                .foregroundStyle(.red.opacity(0.06))
             RuleMark(y: .value("Zero", 0))
                 .foregroundStyle(.secondary.opacity(0.3))
                 .lineStyle(StrokeStyle(dash: [4, 4]))
-            // Area fills — one continuous series per run
-            ForEach(runs.indices, id: \.self) { runIdx in
-                let run = runs[runIdx]
-                ForEach(run.points.indices, id: \.self) { ptIdx in
-                    AreaMark(
-                        x: .value("Trade", run.points[ptIdx].x),
-                        y: .value("P&L", run.points[ptIdx].value),
-                        series: .value("run", runIdx)
-                    )
-                    .foregroundStyle(run.isNegative ? .red.opacity(0.15) : .green.opacity(0.15))
-                }
-            }
             // Line segments
             ForEach(0..<max(data.count - 1, 0), id: \.self) { i in
                 let startValue = data[i].value
@@ -1291,6 +1316,7 @@ struct BotDetailView: View {
                     .lineStyle(StrokeStyle(lineWidth: 2.5))
             }
         }
+        .chartXScale(domain: 0...(data.last?.x ?? 1))
         .chartYScale(domain: (minVal - padding)...(maxVal + padding))
         .chartYAxis {
             AxisMarks { value in
