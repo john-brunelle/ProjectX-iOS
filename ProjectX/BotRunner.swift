@@ -559,7 +559,7 @@ class BotRunner {
             if currentBarTime != cachedBarTime && currentBarTime != nil {
                 // Check operating hours before evaluating
                 let key = BotRunKey(botId: bot.id, accountId: accountId)
-                guard checkOperatingHours(bot: bot, key: key) else {
+                guard await checkOperatingHours(bot: bot, key: key) else {
                     try? await Task.sleep(for: .seconds(min(30, barDuration / 2)))
                     continue
                 }
@@ -740,7 +740,7 @@ class BotRunner {
         }
 
         // No position — check operating hours before evaluating
-        guard checkOperatingHours(bot: bot, key: key) else { return }
+        guard await checkOperatingHours(bot: bot, key: key) else { return }
 
         // Fetch bars
         let bars = await service.retrieveBarsForBot(bot, daysBack: 7, limit: 500)
@@ -1155,8 +1155,37 @@ class BotRunner {
         return true
     }
 
-    /// Checks operating hours and logs transitions. Returns true if within hours.
-    private func checkOperatingHours(bot: BotConfig, key: BotRunKey) -> Bool {
+    /// Finds the sleep window the bot is currently in, if any.
+    private func currentSleepWindow(bot: BotConfig) -> SleepWindow? {
+        let cal = Calendar.current
+        let nowMin = cal.component(.hour, from: Date()) * 60 + cal.component(.minute, from: Date())
+        return bot.decodedSleepWindows.first { window in
+            let s = window.startHour * 60 + window.startMinute
+            let e = window.endHour * 60 + window.endMinute
+            if e > s { return nowMin >= s && nowMin < e }
+            else { return nowMin >= s || nowMin < e }
+        }
+    }
+
+    /// Closes position and cancels open orders for a bot on a specific account.
+    private func closeBotPosition(bot: BotConfig, accountId: Int, key: BotRunKey, reason: String) async {
+        let closed = await service.closePosition(accountId: accountId, contractId: bot.contractId)
+        if closed {
+            logToState(key: key, type: .order, message: "Closed position on \(bot.contractName) (\(reason))")
+        }
+        let openOrders = await MainActor.run {
+            realtime.liveOrders.filter { $0.accountId == accountId && $0.contractId == bot.contractId && $0.status == 1 }
+        }
+        for order in openOrders {
+            _ = await service.cancelOrder(accountId: accountId, orderId: order.id)
+        }
+        if !openOrders.isEmpty {
+            logToState(key: key, type: .order, message: "Cancelled \(openOrders.count) order(s) on \(bot.contractName) (\(reason))")
+        }
+    }
+
+    /// Checks operating hours, logs transitions, and closes positions on sleep entry if configured. Returns true if within hours.
+    private func checkOperatingHours(bot: BotConfig, key: BotRunKey) async -> Bool {
         let within = isWithinOperatingHours(bot: bot)
         let wasWithin = runStates[key]?.wasWithinOperatingHours ?? true
 
@@ -1167,19 +1196,13 @@ class BotRunner {
             if within {
                 logToState(key: key, type: .info, message: "Entering operating hours — resuming signal evaluation")
             } else {
-                // Determine if it's a sleep window or outside hours
-                let cal = Calendar.current
-                let nowMin = cal.component(.hour, from: Date()) * 60 + cal.component(.minute, from: Date())
-                let startMin = bot.opStartHour * 60 + bot.opStartMinute
-                let endMin = bot.opEndHour * 60 + bot.opEndMinute
-                if nowMin >= startMin && nowMin < endMin {
-                    // Within main hours but in a sleep window
-                    if let sleepWindow = bot.decodedSleepWindows.first(where: {
-                        let s = $0.startHour * 60 + $0.startMinute
-                        let e = $0.endHour * 60 + $0.endMinute
-                        return nowMin >= s && nowMin < e
-                    }) {
-                        logToState(key: key, type: .info, message: "Entering sleep window (\(sleepWindow.label)) — pausing")
+                // Determine if entering a sleep window or leaving operating hours
+                if let sleepWindow = currentSleepWindow(bot: bot) {
+                    if sleepWindow.closePosition {
+                        logToState(key: key, type: .info, message: "Entering sleep window (\(sleepWindow.label)) — closing position & orders")
+                        await closeBotPosition(bot: bot, accountId: key.accountId, key: key, reason: "sleep window")
+                    } else {
+                        logToState(key: key, type: .info, message: "Entering sleep window (\(sleepWindow.label)) — pausing (position kept open)")
                     }
                 } else {
                     logToState(key: key, type: .info, message: "Outside operating hours — pausing signal evaluation")

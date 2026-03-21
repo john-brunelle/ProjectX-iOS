@@ -694,14 +694,19 @@ struct BotDetailView: View {
 
             // Sleep Windows
             if !editSleepWindows.isEmpty {
-                ForEach(editSleepWindows) { window in
-                    HStack {
-                        Image(systemName: "moon.zzz.fill")
-                            .foregroundStyle(.orange)
+                ForEach($editSleepWindows) { $window in
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Image(systemName: "moon.zzz.fill")
+                                .foregroundStyle(.orange)
+                                .font(.caption)
+                            Text(window.label)
+                                .font(.subheadline)
+                            Spacer()
+                        }
+                        Toggle("Close Position", isOn: $window.closePosition)
                             .font(.caption)
-                        Text(window.label)
-                            .font(.subheadline)
-                        Spacer()
+                            .disabled(isRunning)
                     }
                     .swipeActions(edge: .trailing) {
                         if !isRunning {

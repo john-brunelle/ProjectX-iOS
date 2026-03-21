@@ -99,7 +99,7 @@ final class BotConfig {
     var opStartMinute: Int = 30
     var opEndHour: Int = 16
     var opEndMinute: Int = 0
-    var sleepWindows: String = "[{\"sh\":16,\"sm\":0,\"eh\":18,\"em\":0}]"  // Default: Market Close 4PM-6PM
+    var sleepWindows: String = "[{\"sh\":16,\"sm\":0,\"eh\":18,\"em\":0,\"cp\":true}]"  // Default: Market Close 4PM-6PM, close position
 
     // Many-to-many: indicators used by this bot
     @Relationship(inverse: \IndicatorConfig.bots)
@@ -195,19 +195,22 @@ struct SleepWindow: Codable, Identifiable, Equatable {
     var startMinute: Int
     var endHour: Int
     var endMinute: Int
+    var closePosition: Bool
 
     enum CodingKeys: String, CodingKey {
         case startHour = "sh"
         case startMinute = "sm"
         case endHour = "eh"
         case endMinute = "em"
+        case closePosition = "cp"
     }
 
-    init(startHour: Int = 12, startMinute: Int = 0, endHour: Int = 13, endMinute: Int = 0) {
+    init(startHour: Int = 12, startMinute: Int = 0, endHour: Int = 13, endMinute: Int = 0, closePosition: Bool = true) {
         self.startHour = startHour
         self.startMinute = startMinute
         self.endHour = endHour
         self.endMinute = endMinute
+        self.closePosition = closePosition
     }
 
     init(from decoder: Decoder) throws {
@@ -216,6 +219,7 @@ struct SleepWindow: Codable, Identifiable, Equatable {
         self.startMinute = try c.decode(Int.self, forKey: .startMinute)
         self.endHour = try c.decode(Int.self, forKey: .endHour)
         self.endMinute = try c.decode(Int.self, forKey: .endMinute)
+        self.closePosition = (try? c.decode(Bool.self, forKey: .closePosition)) ?? true
     }
 
     func encode(to encoder: Encoder) throws {
@@ -224,6 +228,7 @@ struct SleepWindow: Codable, Identifiable, Equatable {
         try c.encode(startMinute, forKey: .startMinute)
         try c.encode(endHour, forKey: .endHour)
         try c.encode(endMinute, forKey: .endMinute)
+        try c.encode(closePosition, forKey: .closePosition)
     }
 
     var label: String {
