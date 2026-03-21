@@ -76,6 +76,9 @@ struct BotRunState {
 
     // Claude AI — only call when a new bar closes
     var lastClaudeBarTime: String?
+
+    // Operating hours — track last state for transition logging
+    var wasWithinOperatingHours: Bool = true
     var lastClaudeSignal: Signal = .neutral
 }
 
@@ -195,7 +198,9 @@ class BotRunner {
         }
 
         var state = BotRunState()
+        state.wasWithinOperatingHours = isWithinOperatingHours(bot: bot)
         log(key: key, type: .info, message: "Bot started on account \(accountId)", state: &state)
+        log(key: key, type: .info, message: "Operating hours: \(bot.operatingHoursLabel)", state: &state)
 
         state.task = Task { [weak self] in
             guard let self else { return }
@@ -552,6 +557,12 @@ class BotRunner {
             let cachedBarTime = runStates[key]?.lastClaudeBarTime
 
             if currentBarTime != cachedBarTime && currentBarTime != nil {
+                // Check operating hours before evaluating
+                let key = BotRunKey(botId: bot.id, accountId: accountId)
+                guard checkOperatingHours(bot: bot, key: key) else {
+                    try? await Task.sleep(for: .seconds(min(30, barDuration / 2)))
+                    continue
+                }
                 // New bar closed — fetch precise data and evaluate
                 await aiEvaluationPass(bot: bot, accountId: accountId)
                 // Sleep for the full bar duration — next bar won't close sooner
@@ -728,7 +739,8 @@ class BotRunner {
             return
         }
 
-        // No position — evaluate indicators to look for entry signals
+        // No position — check operating hours before evaluating
+        guard checkOperatingHours(bot: bot, key: key) else { return }
 
         // Fetch bars
         let bars = await service.retrieveBarsForBot(bot, daysBack: 7, limit: 500)
@@ -1107,6 +1119,74 @@ class BotRunner {
         )
         ((try? ctx.fetch(descriptor)) ?? []).forEach { ctx.delete($0) }
         try? ctx.save()
+    }
+
+    // MARK: - Operating Hours
+
+    private func isWithinOperatingHours(bot: BotConfig) -> Bool {
+        guard bot.operatingMode != "24/7" else { return true }
+        let cal = Calendar.current
+        let now = Date()
+        let nowMin = cal.component(.hour, from: now) * 60 + cal.component(.minute, from: now)
+        let startMin = bot.opStartHour * 60 + bot.opStartMinute
+        let endMin = bot.opEndHour * 60 + bot.opEndMinute
+
+        // Check if within operating window (handles overnight wrap)
+        let withinHours: Bool
+        if endMin <= startMin {
+            // Overnight: e.g. 6PM (1080) → 9:30AM (570)
+            withinHours = nowMin >= startMin || nowMin < endMin
+        } else {
+            withinHours = nowMin >= startMin && nowMin < endMin
+        }
+        guard withinHours else { return false }
+
+        // Check sleep windows
+        for window in bot.decodedSleepWindows {
+            let sleepStart = window.startHour * 60 + window.startMinute
+            let sleepEnd = window.endHour * 60 + window.endMinute
+            if sleepEnd > sleepStart {
+                if nowMin >= sleepStart && nowMin < sleepEnd { return false }
+            } else {
+                // Overnight sleep window
+                if nowMin >= sleepStart || nowMin < sleepEnd { return false }
+            }
+        }
+        return true
+    }
+
+    /// Checks operating hours and logs transitions. Returns true if within hours.
+    private func checkOperatingHours(bot: BotConfig, key: BotRunKey) -> Bool {
+        let within = isWithinOperatingHours(bot: bot)
+        let wasWithin = runStates[key]?.wasWithinOperatingHours ?? true
+
+        if within != wasWithin {
+            updateState(key: key) { state in
+                state.wasWithinOperatingHours = within
+            }
+            if within {
+                logToState(key: key, type: .info, message: "Entering operating hours — resuming signal evaluation")
+            } else {
+                // Determine if it's a sleep window or outside hours
+                let cal = Calendar.current
+                let nowMin = cal.component(.hour, from: Date()) * 60 + cal.component(.minute, from: Date())
+                let startMin = bot.opStartHour * 60 + bot.opStartMinute
+                let endMin = bot.opEndHour * 60 + bot.opEndMinute
+                if nowMin >= startMin && nowMin < endMin {
+                    // Within main hours but in a sleep window
+                    if let sleepWindow = bot.decodedSleepWindows.first(where: {
+                        let s = $0.startHour * 60 + $0.startMinute
+                        let e = $0.endHour * 60 + $0.endMinute
+                        return nowMin >= s && nowMin < e
+                    }) {
+                        logToState(key: key, type: .info, message: "Entering sleep window (\(sleepWindow.label)) — pausing")
+                    }
+                } else {
+                    logToState(key: key, type: .info, message: "Outside operating hours — pausing signal evaluation")
+                }
+            }
+        }
+        return within
     }
 
     private func logToState(key: BotRunKey, type: BotLogType, message: String) {

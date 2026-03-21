@@ -37,6 +37,15 @@ struct BotDetailView: View {
     @State private var tradeDirection: TradeDirectionFilter = .both
     @State private var selectedIndicatorIDs: Set<UUID> = []
 
+    // ── Operating hours state ──
+    @State private var operatingMode = "24/7"
+    @State private var opStartTime = Calendar.current.date(from: DateComponents(hour: 9, minute: 30))!
+    @State private var opEndTime = Calendar.current.date(from: DateComponents(hour: 16, minute: 0))!
+    @State private var editSleepWindows: [SleepWindow] = []
+    @State private var showAddSleepWindow = false
+    @State private var newSleepStart = Calendar.current.date(from: DateComponents(hour: 12, minute: 0))!
+    @State private var newSleepEnd = Calendar.current.date(from: DateComponents(hour: 13, minute: 0))!
+
     // ── Contract search sheet ──
     @State private var showContractSearch = false
     @State private var contracts: [Contract] = []
@@ -100,6 +109,12 @@ struct BotDetailView: View {
         || quantity != bot.quantity
         || tradeDirection != bot.tradeDirection
         || selectedIndicatorIDs != Set(bot.indicators.map { $0.id })
+        || operatingMode != bot.operatingMode
+        || Calendar.current.component(.hour, from: opStartTime) != bot.opStartHour
+        || Calendar.current.component(.minute, from: opStartTime) != bot.opStartMinute
+        || Calendar.current.component(.hour, from: opEndTime) != bot.opEndHour
+        || Calendar.current.component(.minute, from: opEndTime) != bot.opEndMinute
+        || editSleepWindows != bot.decodedSleepWindows
     }
 
     var body: some View {
@@ -108,6 +123,7 @@ struct BotDetailView: View {
                 statusSections
                 configSections
                 riskSections
+                operatingHoursSection
                 indicatorSections
                 backtestSections
                 infoAndActionSections
@@ -629,6 +645,213 @@ struct BotDetailView: View {
             .disabled(isRunning)
         } header: {
             Text("Risk Management")
+        }
+    }
+
+    // MARK: - Operating Hours Section
+
+    @ViewBuilder
+    private var operatingHoursSection: some View {
+        Section("Operating Hours") {
+            // Mode picker: RTH / Extended / 24/7
+            Picker("Mode", selection: Binding(
+                get: { operatingMode },
+                set: { newMode in
+                    operatingMode = newMode
+                    let cal = Calendar.current
+                    switch newMode {
+                    case "rth":
+                        opStartTime = cal.date(from: DateComponents(hour: 9, minute: 30)) ?? opStartTime
+                        opEndTime = cal.date(from: DateComponents(hour: 16, minute: 0)) ?? opEndTime
+                    case "extended":
+                        opStartTime = cal.date(from: DateComponents(hour: 18, minute: 0)) ?? opStartTime
+                        opEndTime = cal.date(from: DateComponents(hour: 9, minute: 30)) ?? opEndTime
+                    default: break
+                    }
+                }
+            )) {
+                Text("RTH").tag("rth")
+                Text("Extended").tag("extended")
+                Text("24/7").tag("24/7")
+            }
+            .pickerStyle(.segmented)
+            .disabled(isRunning)
+            .onChange(of: opStartTime) { _, _ in autoSwitchToCustom() }
+            .onChange(of: opEndTime) { _, _ in autoSwitchToCustom() }
+
+            if operatingMode != "24/7" {
+                DatePicker("Start", selection: $opStartTime, displayedComponents: .hourAndMinute)
+                    .environment(\.locale, Locale(identifier: "en_US"))
+                    .disabled(isRunning)
+                DatePicker("End", selection: $opEndTime, displayedComponents: .hourAndMinute)
+                    .environment(\.locale, Locale(identifier: "en_US"))
+                    .disabled(isRunning)
+            }
+
+            // Visual timeline bar (shown for all modes)
+            operatingHoursBar
+                .padding(.vertical, 4)
+
+            // Sleep Windows
+            if !editSleepWindows.isEmpty {
+                ForEach(editSleepWindows) { window in
+                    HStack {
+                        Image(systemName: "moon.zzz.fill")
+                            .foregroundStyle(.orange)
+                            .font(.caption)
+                        Text(window.label)
+                            .font(.subheadline)
+                        Spacer()
+                    }
+                    .swipeActions(edge: .trailing) {
+                        if !isRunning {
+                            Button(role: .destructive) {
+                                editSleepWindows.removeAll { $0.id == window.id }
+                            } label: {
+                                Label("Remove", systemImage: "trash")
+                            }
+                        }
+                    }
+                }
+            }
+
+            if !isRunning {
+                if showAddSleepWindow {
+                    VStack(spacing: 8) {
+                        DatePicker("Sleep Start", selection: $newSleepStart, displayedComponents: .hourAndMinute)
+                            .environment(\.locale, Locale(identifier: "en_US"))
+                        DatePicker("Sleep End", selection: $newSleepEnd, displayedComponents: .hourAndMinute)
+                            .environment(\.locale, Locale(identifier: "en_US"))
+                        HStack {
+                            Button("Cancel") {
+                                withAnimation { showAddSleepWindow = false }
+                            }
+                            .foregroundStyle(.secondary)
+                            Spacer()
+                            Button("Add") {
+                                let cal = Calendar.current
+                                let window = SleepWindow(
+                                    startHour: cal.component(.hour, from: newSleepStart),
+                                    startMinute: cal.component(.minute, from: newSleepStart),
+                                    endHour: cal.component(.hour, from: newSleepEnd),
+                                    endMinute: cal.component(.minute, from: newSleepEnd)
+                                )
+                                editSleepWindows.append(window)
+                                withAnimation { showAddSleepWindow = false }
+                            }
+                            .fontWeight(.semibold)
+                        }
+                        .font(.subheadline)
+                    }
+                } else {
+                    Button {
+                        withAnimation { showAddSleepWindow = true }
+                    } label: {
+                        Label("Add Sleep Time", systemImage: "plus.circle")
+                    }
+                }
+            }
+        }
+    }
+
+    /// Auto-switch to custom mode when user manually edits times
+    private func autoSwitchToCustom() {
+        guard operatingMode != "24/7" && operatingMode != "custom" else { return }
+        let cal = Calendar.current
+        let sh = cal.component(.hour, from: opStartTime)
+        let sm = cal.component(.minute, from: opStartTime)
+        let eh = cal.component(.hour, from: opEndTime)
+        let em = cal.component(.minute, from: opEndTime)
+
+        let isRTH = sh == 9 && sm == 30 && eh == 16 && em == 0
+        let isExtended = sh == 18 && sm == 0 && eh == 9 && em == 30
+
+        if !isRTH && !isExtended {
+            operatingMode = "custom"
+        }
+    }
+
+    /// Visual timeline bar showing active hours, sleep windows, and inactive periods
+    private var operatingHoursBar: some View {
+        let cal = Calendar.current
+        let startMin = cal.component(.hour, from: opStartTime) * 60 + cal.component(.minute, from: opStartTime)
+        let endMin = cal.component(.hour, from: opEndTime) * 60 + cal.component(.minute, from: opEndTime)
+        let isOvernight = endMin <= startMin
+
+        return VStack(spacing: 4) {
+            GeometryReader { geo in
+                let totalMinutes = 1440.0
+                let width = geo.size.width
+
+                let is24_7 = operatingMode == "24/7"
+
+                ZStack(alignment: .leading) {
+                    // Inactive background
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(is24_7 ? Color.green.opacity(0.4) : Color.secondary.opacity(0.15))
+                        .frame(height: 20)
+
+                    // Active hours (only for non-24/7)
+                    if !is24_7 {
+                        if isOvernight {
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(Color.green.opacity(0.4))
+                                .frame(width: max(0, width * CGFloat(1440 - startMin) / CGFloat(totalMinutes)), height: 20)
+                                .offset(x: width * CGFloat(startMin) / CGFloat(totalMinutes))
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(Color.green.opacity(0.4))
+                                .frame(width: max(0, width * CGFloat(endMin) / CGFloat(totalMinutes)), height: 20)
+                        } else {
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(Color.green.opacity(0.4))
+                                .frame(width: max(0, width * CGFloat(endMin - startMin) / CGFloat(totalMinutes)), height: 20)
+                                .offset(x: width * CGFloat(startMin) / CGFloat(totalMinutes))
+                        }
+                    }
+
+                    // Sleep windows
+                    ForEach(editSleepWindows) { window in
+                        let sleepStart = window.startHour * 60 + window.startMinute
+                        let sleepEnd = window.endHour * 60 + window.endMinute
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(Color.orange.opacity(0.5))
+                            .frame(width: max(0, width * CGFloat(sleepEnd - sleepStart) / CGFloat(totalMinutes)), height: 20)
+                            .offset(x: width * CGFloat(sleepStart) / CGFloat(totalMinutes))
+                    }
+                }
+            }
+            .frame(height: 20)
+
+            // Time labels
+            HStack {
+                Text("12a")
+                Spacer()
+                Text("6a")
+                Spacer()
+                Text("12p")
+                Spacer()
+                Text("6p")
+                Spacer()
+                Text("12a")
+            }
+            .font(.system(size: 8))
+            .foregroundStyle(.secondary)
+
+            // Legend
+            HStack(spacing: 12) {
+                HStack(spacing: 4) {
+                    RoundedRectangle(cornerRadius: 2).fill(.green.opacity(0.4)).frame(width: 12, height: 8)
+                    Text("Active").font(.system(size: 8)).foregroundStyle(.secondary)
+                }
+                HStack(spacing: 4) {
+                    RoundedRectangle(cornerRadius: 2).fill(.orange.opacity(0.5)).frame(width: 12, height: 8)
+                    Text("Sleep").font(.system(size: 8)).foregroundStyle(.secondary)
+                }
+                HStack(spacing: 4) {
+                    RoundedRectangle(cornerRadius: 2).fill(.secondary.opacity(0.15)).frame(width: 12, height: 8)
+                    Text("Off").font(.system(size: 8)).foregroundStyle(.secondary)
+                }
+            }
         }
     }
 
@@ -1396,6 +1619,19 @@ struct BotDetailView: View {
         quantity = bot.quantity
         tradeDirection = bot.tradeDirection
         selectedIndicatorIDs = Set(bot.indicators.map { $0.id })
+
+        // Operating hours
+        operatingMode = bot.operatingMode
+        let cal = Calendar.current
+        opStartTime = cal.date(from: DateComponents(hour: bot.opStartHour, minute: bot.opStartMinute)) ?? opStartTime
+        opEndTime = cal.date(from: DateComponents(hour: bot.opEndHour, minute: bot.opEndMinute)) ?? opEndTime
+        let decoded = bot.decodedSleepWindows
+        if decoded.isEmpty {
+            // Seed default market close sleep window for existing bots
+            editSleepWindows = [SleepWindow(startHour: 16, startMinute: 0, endHour: 18, endMinute: 0)]
+        } else {
+            editSleepWindows = decoded
+        }
     }
 
     private func save() {
@@ -1412,6 +1648,16 @@ struct BotDetailView: View {
         bot.quantity = quantity
         bot.tradeDirection = tradeDirection
         bot.indicators = allIndicators.filter { selectedIndicatorIDs.contains($0.id) }
+
+        // Operating hours
+        let cal = Calendar.current
+        bot.operatingMode = operatingMode
+        bot.opStartHour = cal.component(.hour, from: opStartTime)
+        bot.opStartMinute = cal.component(.minute, from: opStartTime)
+        bot.opEndHour = cal.component(.hour, from: opEndTime)
+        bot.opEndMinute = cal.component(.minute, from: opEndTime)
+        bot.encodeSleepWindows(editSleepWindows)
+
         bot.updatedAt = Date()
         try? modelContext.save()
     }

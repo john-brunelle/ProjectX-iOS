@@ -93,6 +93,14 @@ final class BotConfig {
     var lifetimePnL: Double = 0
     var lifetimeTradeCount: Int = 0
 
+    // Operating Hours
+    var operatingMode: String = "24/7"   // "24/7", "rth", "custom"
+    var opStartHour: Int = 9
+    var opStartMinute: Int = 30
+    var opEndHour: Int = 16
+    var opEndMinute: Int = 0
+    var sleepWindows: String = "[{\"sh\":16,\"sm\":0,\"eh\":18,\"em\":0}]"  // Default: Market Close 4PM-6PM
+
     // Many-to-many: indicators used by this bot
     @Relationship(inverse: \IndicatorConfig.bots)
     var indicators: [IndicatorConfig]
@@ -116,6 +124,35 @@ final class BotConfig {
     /// Durable ownership prefix used in order customTags (e.g. "bot-A1B2C3D4").
     /// Matches orders placed by this bot across restarts and cold starts.
     var tagPrefix: String { "bot-\(id.uuidString.prefix(8))" }
+
+    // MARK: Operating Hours Helpers
+
+    var decodedSleepWindows: [SleepWindow] {
+        guard let data = sleepWindows.data(using: .utf8),
+              let windows = try? JSONDecoder().decode([SleepWindow].self, from: data)
+        else { return [] }
+        return windows
+    }
+
+    func encodeSleepWindows(_ windows: [SleepWindow]) {
+        guard let data = try? JSONEncoder().encode(windows),
+              let json = String(data: data, encoding: .utf8)
+        else { return }
+        sleepWindows = json
+    }
+
+    var operatingHoursLabel: String {
+        if operatingMode == "24/7" { return "24/7" }
+        let startStr = SleepWindow.formatTime(hour: opStartHour, minute: opStartMinute)
+        let endStr = SleepWindow.formatTime(hour: opEndHour, minute: opEndMinute)
+        let prefix: String
+        switch operatingMode {
+        case "rth": prefix = "RTH"
+        case "extended": prefix = "Extended"
+        default: prefix = "Custom"
+        }
+        return "\(prefix) \(startStr) – \(endStr)"
+    }
 
     // MARK: Init
 
@@ -147,5 +184,55 @@ final class BotConfig {
         self.createdAt = Date()
         self.updatedAt = Date()
         self.indicators = indicators
+    }
+}
+
+// MARK: - Sleep Window
+
+struct SleepWindow: Codable, Identifiable, Equatable {
+    var id = UUID()
+    var startHour: Int
+    var startMinute: Int
+    var endHour: Int
+    var endMinute: Int
+
+    enum CodingKeys: String, CodingKey {
+        case startHour = "sh"
+        case startMinute = "sm"
+        case endHour = "eh"
+        case endMinute = "em"
+    }
+
+    init(startHour: Int = 12, startMinute: Int = 0, endHour: Int = 13, endMinute: Int = 0) {
+        self.startHour = startHour
+        self.startMinute = startMinute
+        self.endHour = endHour
+        self.endMinute = endMinute
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.startHour = try c.decode(Int.self, forKey: .startHour)
+        self.startMinute = try c.decode(Int.self, forKey: .startMinute)
+        self.endHour = try c.decode(Int.self, forKey: .endHour)
+        self.endMinute = try c.decode(Int.self, forKey: .endMinute)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(startHour, forKey: .startHour)
+        try c.encode(startMinute, forKey: .startMinute)
+        try c.encode(endHour, forKey: .endHour)
+        try c.encode(endMinute, forKey: .endMinute)
+    }
+
+    var label: String {
+        "\(Self.formatTime(hour: startHour, minute: startMinute)) → \(Self.formatTime(hour: endHour, minute: endMinute))"
+    }
+
+    static func formatTime(hour: Int, minute: Int) -> String {
+        let h = hour % 12 == 0 ? 12 : hour % 12
+        let suffix = hour < 12 ? "AM" : "PM"
+        return minute == 0 ? "\(h) \(suffix)" : "\(h):\(String(format: "%02d", minute)) \(suffix)"
     }
 }

@@ -15,7 +15,7 @@ import SwiftData
 //  4. Update `schemas` and `stages` arrays
 // ─────────────────────────────────────────────
 
-// MARK: - V1 (baseline — current schema snapshot)
+// MARK: - Current Schema
 
 enum ProjectXSchemaV1: VersionedSchema {
     static var versionIdentifier = Schema.Version(1, 0, 0)
@@ -39,7 +39,7 @@ enum ProjectXMigrationPlan: SchemaMigrationPlan {
     ]
 
     static var stages: [MigrationStage] = [
-        // Future migrations go here, e.g.:
-        // .lightweight(fromVersion: ProjectXSchemaV1.self, toVersion: ProjectXSchemaV2.self)
+        // Lightweight migrations are handled automatically by SwiftData
+        // when new @Model properties have default values.
     ]
 }
