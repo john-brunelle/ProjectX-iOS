@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import Charts
 
 // ─────────────────────────────────────────────
 // Bot Detail View
@@ -75,6 +76,7 @@ struct BotDetailView: View {
     @State private var showClearLogConfirmation = false
     @State private var showResetPnLConfirmation = false
     @State private var showTradeHistory = false
+    @State private var showBacktestCharts = false
     @State private var resetPnLTarget: ResetPnLTarget = .session
 
     private enum ResetPnLTarget { case session, lifetime, all }
@@ -140,6 +142,11 @@ struct BotDetailView: View {
             .sheet(isPresented: $showTradeHistory) {
                 BotTradeHistoryView(bot: bot, accountId: service.activeAccount?.id ?? 0)
                     .environment(service)
+            }
+            .sheet(isPresented: $showBacktestCharts) {
+                if let result = backtestResult {
+                    BacktestChartsView(result: result)
+                }
             }
             .confirmationDialog(resetPnLDialogTitle, isPresented: $showResetPnLConfirmation) {
                 Button("Reset", role: .destructive) {
@@ -1057,6 +1064,53 @@ struct BotDetailView: View {
             backtestStatRow("Largest Win", value: formatCurrency(result.statistics.largestWin), color: .green)
             backtestStatRow("Largest Loss", value: formatCurrency(result.statistics.largestLoss), color: .red)
             backtestStatRow("Avg Duration", value: formatDuration(result.statistics.averageTradeDuration))
+        }
+
+        // ── Equity Curve Chart ──────────────
+        if !result.equityCurve.isEmpty {
+            Section("Equity Curve") {
+                Button {
+                    showBacktestCharts = true
+                } label: {
+                    Label("View All Charts", systemImage: "chart.xyaxis.line")
+                        .font(.caption.weight(.medium))
+                }
+                Chart {
+                    // Start at zero
+                    LineMark(x: .value("Trade", 0), y: .value("P&L", 0))
+                        .foregroundStyle(.green)
+                    ForEach(Array(result.equityCurve.enumerated()), id: \.offset) { index, value in
+                        LineMark(
+                            x: .value("Trade", index + 1),
+                            y: .value("P&L", value)
+                        )
+                        .foregroundStyle(value >= 0 ? .green : .red)
+                        AreaMark(
+                            x: .value("Trade", index + 1),
+                            y: .value("P&L", value)
+                        )
+                        .foregroundStyle(
+                            .linearGradient(
+                                colors: [value >= 0 ? .green.opacity(0.3) : .red.opacity(0.3), .clear],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        )
+                    }
+                }
+                .chartYAxis {
+                    AxisMarks { value in
+                        AxisGridLine()
+                        AxisValueLabel {
+                            if let v = value.as(Double.self) {
+                                Text(v, format: .currency(code: "USD").precision(.fractionLength(0)))
+                            }
+                        }
+                    }
+                }
+                .chartXAxisLabel("Trade #")
+                .frame(height: 200)
+            }
         }
 
         Section("Backtest Trades (\(result.trades.count))") {
