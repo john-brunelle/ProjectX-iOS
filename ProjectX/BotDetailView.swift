@@ -87,6 +87,7 @@ struct BotDetailView: View {
     @State private var showResetPnLConfirmation = false
     @State private var showTradeHistory = false
     @State private var showBacktestCharts = false
+    @State private var showBacktestTrades = true
     @State private var resetPnLTarget: ResetPnLTarget = .session
 
     private enum ResetPnLTarget { case session, lifetime, all }
@@ -1455,9 +1456,23 @@ struct BotDetailView: View {
             }
         }
 
-        Section("Backtest Trades (\(result.trades.count))") {
-            ForEach(result.trades) { trade in
-                BacktestTradeRow(trade: trade)
+        Section {
+            if showBacktestTrades {
+                ForEach(result.trades) { trade in
+                    BacktestTradeRow(trade: trade)
+                }
+            }
+        } header: {
+            HStack {
+                Text("Backtest Trades (\(result.trades.count))")
+                Spacer()
+                Button {
+                    withAnimation { showBacktestTrades.toggle() }
+                } label: {
+                    Text(showBacktestTrades ? "Hide" : "Show")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.blue)
+                }
             }
         }
     }
