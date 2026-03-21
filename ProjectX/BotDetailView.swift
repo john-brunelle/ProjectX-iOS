@@ -145,7 +145,7 @@ struct BotDetailView: View {
             }
             .sheet(isPresented: $showBacktestCharts) {
                 if let result = backtestResult {
-                    BacktestChartsView(result: result)
+                    BacktestChartsView(result: result, botName: bot.name, tradeDirection: tradeDirection)
                 }
             }
             .confirmationDialog(resetPnLDialogTitle, isPresented: $showResetPnLConfirmation) {
@@ -1075,41 +1075,7 @@ struct BotDetailView: View {
                     Label("View All Charts", systemImage: "chart.xyaxis.line")
                         .font(.caption.weight(.medium))
                 }
-                Chart {
-                    // Start at zero
-                    LineMark(x: .value("Trade", 0), y: .value("P&L", 0))
-                        .foregroundStyle(.green)
-                    ForEach(Array(result.equityCurve.enumerated()), id: \.offset) { index, value in
-                        LineMark(
-                            x: .value("Trade", index + 1),
-                            y: .value("P&L", value)
-                        )
-                        .foregroundStyle(value >= 0 ? .green : .red)
-                        AreaMark(
-                            x: .value("Trade", index + 1),
-                            y: .value("P&L", value)
-                        )
-                        .foregroundStyle(
-                            .linearGradient(
-                                colors: [value >= 0 ? .green.opacity(0.3) : .red.opacity(0.3), .clear],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            )
-                        )
-                    }
-                }
-                .chartYAxis {
-                    AxisMarks { value in
-                        AxisGridLine()
-                        AxisValueLabel {
-                            if let v = value.as(Double.self) {
-                                Text(v, format: .currency(code: "USD").precision(.fractionLength(0)))
-                            }
-                        }
-                    }
-                }
-                .chartXAxisLabel("Trade #")
-                .frame(height: 200)
+                inlineEquityCurve(result: result)
             }
         }
 
@@ -1221,6 +1187,123 @@ struct BotDetailView: View {
 
         backtestResult = BacktestEngine.run(parameters: parameters)
         isBacktesting = false
+    }
+
+    // MARK: - Inline Equity Curve
+
+    private struct InlineEquityPoint {
+        let x: Double
+        let value: Double
+    }
+
+    private func buildInlineEquityCurveData(from raw: [Double]) -> [InlineEquityPoint] {
+        guard !raw.isEmpty else { return [] }
+        var points: [InlineEquityPoint] = [InlineEquityPoint(x: 0, value: 0)]
+        for i in 0..<raw.count {
+            let prev = i == 0 ? 0.0 : raw[i - 1]
+            let curr = raw[i]
+            let prevX = Double(i)
+            let currX = Double(i + 1)
+            if (prev > 0 && curr < 0) || (prev < 0 && curr > 0) {
+                let fraction = prev / (prev - curr)
+                let zeroX = prevX + fraction * (currX - prevX)
+                points.append(InlineEquityPoint(x: zeroX, value: 0))
+            }
+            points.append(InlineEquityPoint(x: currX, value: curr))
+        }
+        return points
+    }
+
+    @ViewBuilder
+    private func inlineEquityCurve(result: BacktestResult) -> some View {
+        let data = buildInlineEquityCurveData(from: result.equityCurve)
+        let minVal = data.map(\.value).min() ?? 0
+        let maxVal = data.map(\.value).max() ?? 0
+        let padding = max(abs(maxVal - minVal) * 0.05, 1)
+        let finalValue = data.last?.value ?? 0
+
+        VStack(alignment: .trailing, spacing: 4) {
+            Text(finalValue, format: .currency(code: "USD").precision(.fractionLength(0)))
+                .font(.caption.weight(.bold))
+                .foregroundStyle(finalValue >= 0 ? .green : .red)
+            inlineEquityCurveChart(data: data, minVal: minVal, maxVal: maxVal, padding: padding)
+        }
+    }
+
+    private struct InlineEquityRun {
+        let points: [InlineEquityPoint]
+        let isNegative: Bool
+    }
+
+    private func buildInlineEquityRuns(from data: [InlineEquityPoint]) -> [InlineEquityRun] {
+        guard data.count >= 2 else { return [] }
+        var runs: [InlineEquityRun] = []
+        var currentPoints: [InlineEquityPoint] = [data[0]]
+        var currentNeg = data[0].value < 0
+
+        for i in 1..<data.count {
+            let pt = data[i]
+            let isNeg = pt.value < 0
+            if isNeg == currentNeg || pt.value == 0 {
+                currentPoints.append(pt)
+            } else {
+                currentPoints.append(pt)
+                runs.append(InlineEquityRun(points: currentPoints, isNegative: currentNeg))
+                currentPoints = [pt]
+                currentNeg = isNeg
+            }
+        }
+        if !currentPoints.isEmpty {
+            runs.append(InlineEquityRun(points: currentPoints, isNegative: currentNeg))
+        }
+        return runs
+    }
+
+    private func inlineEquityCurveChart(data: [InlineEquityPoint], minVal: Double, maxVal: Double, padding: Double) -> some View {
+        let runs = buildInlineEquityRuns(from: data)
+        return Chart {
+            RuleMark(y: .value("Zero", 0))
+                .foregroundStyle(.secondary.opacity(0.3))
+                .lineStyle(StrokeStyle(dash: [4, 4]))
+            // Area fills — one continuous series per run
+            ForEach(runs.indices, id: \.self) { runIdx in
+                let run = runs[runIdx]
+                ForEach(run.points.indices, id: \.self) { ptIdx in
+                    AreaMark(
+                        x: .value("Trade", run.points[ptIdx].x),
+                        y: .value("P&L", run.points[ptIdx].value),
+                        series: .value("run", runIdx)
+                    )
+                    .foregroundStyle(run.isNegative ? .red.opacity(0.15) : .green.opacity(0.15))
+                }
+            }
+            // Line segments
+            ForEach(0..<max(data.count - 1, 0), id: \.self) { i in
+                let startValue = data[i].value
+                let endValue = data[i + 1].value
+                let isNeg = (startValue < 0 || endValue < 0) && !(startValue == 0 && endValue >= 0)
+                let color: Color = isNeg ? .red : .green
+                LineMark(x: .value("Trade", data[i].x), y: .value("P&L", data[i].value), series: .value("seg", i))
+                    .foregroundStyle(color)
+                    .lineStyle(StrokeStyle(lineWidth: 2.5))
+                LineMark(x: .value("Trade", data[i + 1].x), y: .value("P&L", endValue), series: .value("seg", i))
+                    .foregroundStyle(color)
+                    .lineStyle(StrokeStyle(lineWidth: 2.5))
+            }
+        }
+        .chartYScale(domain: (minVal - padding)...(maxVal + padding))
+        .chartYAxis {
+            AxisMarks { value in
+                AxisGridLine()
+                AxisValueLabel {
+                    if let v = value.as(Double.self) {
+                        Text(v, format: .currency(code: "USD").precision(.fractionLength(0)))
+                    }
+                }
+            }
+        }
+        .chartXAxisLabel("Trade #")
+        .frame(height: 210)
     }
 
     // MARK: - Backtest Formatting Helpers

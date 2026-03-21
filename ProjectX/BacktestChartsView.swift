@@ -11,6 +11,8 @@ import Charts
 
 struct BacktestChartsView: View {
     let result: BacktestResult
+    var botName: String = ""
+    var tradeDirection: TradeDirectionFilter = .both
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -18,7 +20,6 @@ struct BacktestChartsView: View {
             ScrollView {
                 LazyVStack(spacing: 24) {
                     equityCurveChart
-                    tradePnLChart
                     drawdownChart
                     directionChart
                     exitReasonChart
@@ -29,7 +30,7 @@ struct BacktestChartsView: View {
                 }
                 .padding()
             }
-            .navigationTitle("Backtest Charts")
+            .navigationTitle(botName.isEmpty ? "Backtest Charts" : "\(botName) — Backtest Charts")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
@@ -47,53 +48,123 @@ struct BacktestChartsView: View {
             subtitle: "Cumulative P&L over all trades",
             detail: "This is the single most important chart in your backtest. It tells the story of your strategy's performance over time — every peak is a new high-water mark, every valley is a drawdown you'd need to stomach in live trading.\n\n\u{1F7E2} Green zone = equity above zero (net profitable)\n\u{1F534} Red zone = equity below zero (net losing)\n\nWhat to look for:\n\u{2022} Smooth upward slope = consistent edge\n\u{2022} Staircase pattern = wins come in bursts\n\u{2022} Steady climb then cliff = strategy may have stopped working\n\u{2022} Flat line = strategy isn't generating meaningful P&L\n\nPro tip: If the curve ends positive but spent most of its time underwater, the strategy may not be reliable enough for live capital."
         ) {
+            equityCurveChartContent
+        }
+    }
+
+    private var equityCurveChartContent: some View {
+        let data = buildEquityCurveWithZeroCrossings()
+        let minVal = data.map(\.value).min() ?? 0
+        let maxVal = data.map(\.value).max() ?? 0
+        let padding = max(abs(maxVal - minVal) * 0.05, 1)
+        let finalValue = data.last?.value ?? 0
+
+        return VStack(alignment: .trailing, spacing: 4) {
+            Text(finalValue, format: .currency(code: "USD").precision(.fractionLength(0)))
+                .font(.caption.weight(.bold))
+                .foregroundStyle(finalValue >= 0 ? .green : .red)
+            let runs = buildEquityRuns(from: data)
             Chart {
-                // Zero reference line
                 RuleMark(y: .value("Zero", 0))
                     .foregroundStyle(.secondary.opacity(0.3))
                     .lineStyle(StrokeStyle(dash: [4, 4]))
-                LineMark(x: .value("Trade", 0), y: .value("P&L", 0))
-                    .foregroundStyle(.green)
-                ForEach(Array(result.equityCurve.enumerated()), id: \.offset) { index, value in
-                    AreaMark(
-                        x: .value("Trade", index + 1),
-                        y: .value("P&L", value)
-                    )
-                    .foregroundStyle(
-                        .linearGradient(
-                            colors: [value >= 0 ? .green.opacity(0.25) : .red.opacity(0.25), .clear],
-                            startPoint: .top,
-                            endPoint: .bottom
+                // Area fills — one continuous series per run
+                ForEach(runs.indices, id: \.self) { runIdx in
+                    let run = runs[runIdx]
+                    ForEach(run.points.indices, id: \.self) { ptIdx in
+                        AreaMark(
+                            x: .value("Trade", run.points[ptIdx].x),
+                            y: .value("P&L", run.points[ptIdx].value),
+                            series: .value("run", runIdx)
                         )
-                    )
-                    .interpolationMethod(.catmullRom)
-                    LineMark(
-                        x: .value("Trade", index + 1),
-                        y: .value("P&L", value)
-                    )
-                    .foregroundStyle(value >= 0 ? .green : .red)
-                    .lineStyle(StrokeStyle(lineWidth: 2.5))
-                    .interpolationMethod(.catmullRom)
-                }
-                // Final value point marker
-                if let last = result.equityCurve.last {
-                    PointMark(
-                        x: .value("Trade", result.equityCurve.count),
-                        y: .value("P&L", last)
-                    )
-                    .foregroundStyle(last >= 0 ? .green : .red)
-                    .symbolSize(40)
-                    .annotation(position: .top, spacing: 4) {
-                        Text(last, format: .currency(code: "USD").precision(.fractionLength(0)))
-                            .font(.caption2.weight(.bold))
-                            .foregroundStyle(last >= 0 ? .green : .red)
+                        .foregroundStyle(run.isNegative ? .red.opacity(0.15) : .green.opacity(0.15))
                     }
                 }
+                // Line segments
+                ForEach(0..<max(data.count - 1, 0), id: \.self) { i in
+                    let startValue = data[i].value
+                    let endValue = data[i + 1].value
+                    let isNeg = (startValue < 0 || endValue < 0) && !(startValue == 0 && endValue >= 0)
+                    let color: Color = isNeg ? .red : .green
+                    LineMark(
+                        x: .value("Trade", data[i].x),
+                        y: .value("P&L", data[i].value),
+                        series: .value("seg", i)
+                    )
+                    .foregroundStyle(color)
+                    .lineStyle(StrokeStyle(lineWidth: 2.5))
+                    LineMark(
+                        x: .value("Trade", data[i + 1].x),
+                        y: .value("P&L", endValue),
+                        series: .value("seg", i)
+                    )
+                    .foregroundStyle(color)
+                    .lineStyle(StrokeStyle(lineWidth: 2.5))
+                }
             }
+            .chartYScale(domain: (minVal - padding)...(maxVal + padding))
             .chartYAxis { currencyAxis }
             .chartXAxisLabel("Trade #")
-            .frame(height: 220)
+            .frame(height: 210)
         }
+    }
+
+    private struct EquityPoint {
+        let x: Double
+        let value: Double
+    }
+
+    /// Inserts interpolated zero-crossing points so the color break happens exactly at $0.
+    private func buildEquityCurveWithZeroCrossings() -> [EquityPoint] {
+        let raw = result.equityCurve
+        guard !raw.isEmpty else { return [] }
+        var points: [EquityPoint] = [EquityPoint(x: 0, value: 0)]
+        for i in 0..<raw.count {
+            let prev = i == 0 ? 0.0 : raw[i - 1]
+            let curr = raw[i]
+            let prevX = Double(i)
+            let currX = Double(i + 1)
+            // Check if zero crossing between prev and curr
+            if (prev > 0 && curr < 0) || (prev < 0 && curr > 0) {
+                // Linear interpolation to find exact x where value = 0
+                let fraction = prev / (prev - curr)
+                let zeroX = prevX + fraction * (currX - prevX)
+                points.append(EquityPoint(x: zeroX, value: 0))
+            }
+            points.append(EquityPoint(x: currX, value: curr))
+        }
+        return points
+    }
+
+    private struct EquityRun {
+        let points: [EquityPoint]
+        let isNegative: Bool
+    }
+
+    /// Splits equity points into contiguous runs of positive/negative values for area shading.
+    private func buildEquityRuns(from data: [EquityPoint]) -> [EquityRun] {
+        guard data.count >= 2 else { return [] }
+        var runs: [EquityRun] = []
+        var currentPoints: [EquityPoint] = [data[0]]
+        var currentNeg = data[0].value < 0
+
+        for i in 1..<data.count {
+            let pt = data[i]
+            let isNeg = pt.value < 0
+            if isNeg == currentNeg || pt.value == 0 {
+                currentPoints.append(pt)
+            } else {
+                // Include the zero-crossing point in both runs for continuity
+                currentPoints.append(pt)
+                runs.append(EquityRun(points: currentPoints, isNegative: currentNeg))
+                currentPoints = [pt]
+                currentNeg = isNeg
+            }
+        }
+        if !currentPoints.isEmpty {
+            runs.append(EquityRun(points: currentPoints, isNegative: currentNeg))
+        }
+        return runs
     }
 
     // MARK: - 2. Trade P&L
@@ -162,53 +233,72 @@ struct BacktestChartsView: View {
             subtitle: "Peak-to-trough decline in equity",
             detail: "Drawdown is the pain chart — it shows how much you'd lose from your best point before recovering. This is what keeps traders up at night.\n\nHow to read it:\n\u{2022} The deeper the red, the worse the drawdown\n\u{2022} Wide valleys = long recovery periods\n\u{2022} Narrow spikes = quick recoveries\n\nBenchmarks:\n\u{2022} < 10% of total P&L = excellent risk control\n\u{2022} 10-25% = acceptable for most strategies\n\u{2022} 25-50% = aggressive, may be hard to hold through\n\u{2022} > 50% = serious risk, reconsider position sizing\n\nPro tip: Multiply your max drawdown by 2x — that's a realistic worst case in live trading. Can your account survive it? If not, reduce quantity or widen stops."
         ) {
-            let drawdownData = buildDrawdownData()
-            let maxDD = drawdownData.min() ?? 0
-            let maxDDIndex = drawdownData.firstIndex(of: maxDD) ?? 0
-            Chart {
-                // Zero line
-                RuleMark(y: .value("Zero", 0))
-                    .foregroundStyle(.secondary.opacity(0.3))
-                    .lineStyle(StrokeStyle(dash: [4, 4]))
-                ForEach(Array(drawdownData.enumerated()), id: \.offset) { index, value in
-                    AreaMark(
-                        x: .value("Trade", index + 1),
-                        y: .value("Drawdown", value)
-                    )
-                    .foregroundStyle(
-                        .linearGradient(
-                            colors: [.red.opacity(0.35), .red.opacity(0.05)],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
-                    .interpolationMethod(.catmullRom)
-                    LineMark(
-                        x: .value("Trade", index + 1),
-                        y: .value("Drawdown", value)
-                    )
-                    .foregroundStyle(.red.opacity(0.8))
-                    .lineStyle(StrokeStyle(lineWidth: 2))
-                    .interpolationMethod(.catmullRom)
-                }
-                // Max drawdown marker
-                if maxDD < 0 {
-                    PointMark(
-                        x: .value("Trade", maxDDIndex + 1),
-                        y: .value("Drawdown", maxDD)
-                    )
-                    .foregroundStyle(.red)
-                    .symbolSize(50)
-                    .annotation(position: .bottom, spacing: 4) {
-                        Text(maxDD, format: .currency(code: "USD").precision(.fractionLength(0)))
-                            .font(.caption2.weight(.bold))
-                            .foregroundStyle(.red)
-                    }
+            drawdownChartContent
+        }
+    }
+
+    private var drawdownChartContent: some View {
+        let drawdownData = buildDrawdownData()
+        let maxDD = drawdownData.min() ?? 0
+        let maxDDIndex = drawdownData.firstIndex(of: maxDD) ?? 0
+        let tradeCount = drawdownData.count
+        let yPadding = max(abs(maxDD) * 0.1, 1)
+
+        return VStack(alignment: .leading, spacing: 4) {
+            if maxDD < 0 {
+                HStack(spacing: 4) {
+                    Text("Max Drawdown:")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    Text(maxDD, format: .currency(code: "USD").precision(.fractionLength(0)))
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.red)
                 }
             }
-            .chartYAxis { currencyAxis }
-            .chartXAxisLabel("Trade #")
-            .frame(height: 220)
+            drawdownLineChart(data: drawdownData, maxDD: maxDD, maxDDIndex: maxDDIndex)
+                .chartXScale(domain: 1...max(tradeCount, 1))
+                .chartYScale(domain: (maxDD - yPadding)...yPadding)
+                .chartYAxis { currencyAxis }
+                .chartXAxisLabel("Trade #")
+                .frame(height: 200)
+        }
+    }
+
+    @ViewBuilder
+    private func drawdownLineChart(data: [Double], maxDD: Double, maxDDIndex: Int) -> some View {
+        Chart {
+            RuleMark(y: .value("Zero", 0))
+                .foregroundStyle(.secondary.opacity(0.3))
+                .lineStyle(StrokeStyle(dash: [4, 4]))
+            ForEach(Array(data.enumerated()), id: \.offset) { index, value in
+                AreaMark(
+                    x: .value("Trade", index + 1),
+                    y: .value("Drawdown", value)
+                )
+                .foregroundStyle(
+                    .linearGradient(
+                        colors: [.red.opacity(0.35), .red.opacity(0.05)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+                .interpolationMethod(.catmullRom)
+                LineMark(
+                    x: .value("Trade", index + 1),
+                    y: .value("Drawdown", value)
+                )
+                .foregroundStyle(.red.opacity(0.8))
+                .lineStyle(StrokeStyle(lineWidth: 2))
+                .interpolationMethod(.catmullRom)
+            }
+            if maxDD < 0 {
+                PointMark(
+                    x: .value("Trade", maxDDIndex + 1),
+                    y: .value("Drawdown", maxDD)
+                )
+                .foregroundStyle(.red)
+                .symbolSize(50)
+            }
         }
     }
 
@@ -232,27 +322,33 @@ struct BacktestChartsView: View {
         }
     }
 
-    @ViewBuilder
+    private var showLongLine: Bool { tradeDirection != .shortOnly }
+    private var showShortLine: Bool { tradeDirection != .longOnly }
+
     private var directionChartContent: some View {
         let curves = buildDirectionCurves()
-        let longData = Array(curves.long.enumerated())
-        let shortData = Array(curves.short.enumerated())
+        let longData = showLongLine ? Array(curves.long.enumerated()) : []
+        let shortData = showShortLine ? Array(curves.short.enumerated()) : []
         let lastLong = curves.long.last ?? 0
         let lastShort = curves.short.last ?? 0
 
-        VStack(alignment: .trailing, spacing: 4) {
+        return VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 12) {
-                HStack(spacing: 4) {
-                    Circle().fill(.green).frame(width: 8, height: 8)
-                    Text("Long: \(lastLong, format: .currency(code: "USD").precision(.fractionLength(0)))")
-                        .font(.caption2.weight(.bold))
-                        .foregroundStyle(.green)
+                if showLongLine {
+                    HStack(spacing: 4) {
+                        Circle().fill(.green).frame(width: 8, height: 8)
+                        Text("Long: \(lastLong, format: .currency(code: "USD").precision(.fractionLength(0)))")
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(.green)
+                    }
                 }
-                HStack(spacing: 4) {
-                    Circle().fill(.red).frame(width: 8, height: 8)
-                    Text("Short: \(lastShort, format: .currency(code: "USD").precision(.fractionLength(0)))")
-                        .font(.caption2.weight(.bold))
-                        .foregroundStyle(.red)
+                if showShortLine {
+                    HStack(spacing: 4) {
+                        Circle().fill(.red).frame(width: 8, height: 8)
+                        Text("Short: \(lastShort, format: .currency(code: "USD").precision(.fractionLength(0)))")
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(.red)
+                    }
                 }
             }
             directionLineChart(longData: longData, shortData: shortData)
@@ -343,8 +439,8 @@ struct BacktestChartsView: View {
                 }
             }
             .chartForegroundStyleScale([
-                "Stop Loss": .red,
                 "Take Profit": .green,
+                "Stop Loss": .red,
                 "End of Data": .orange
             ])
             .frame(height: 220)
@@ -371,45 +467,90 @@ struct BacktestChartsView: View {
         chartCard(
             "Trade Duration",
             subtitle: "How long trades lasted in bars",
-            detail: "How long your bot holds each trade reveals its trading personality.\n\nPatterns:\n\u{2022} Clustered at 2-3 bars = fast scalping strategy, SL/TP brackets are tight relative to volatility\n\u{2022} Spread across many bars = strategy holds through noise, waiting for bigger moves\n\u{2022} Bimodal (two clusters) = some trades hit quick exits, others ride longer — could indicate two different market conditions\n\nWhat to do with this:\n\u{2022} If most trades are 1-2 bars, your SL/TP may be too tight — the ATR tool can help calibrate\n\u{2022} If trades last dozens of bars, you're exposed to overnight/weekend risk in live trading\n\u{2022} Compare winners vs losers — if losers last longer, the strategy holds losers hoping for recovery (bad habit)\n\nPro tip: Multiply the average bar count by your bar size to get real-world hold time. 10 bars on 5-min = 50 minutes of market exposure per trade."
+            detail: "How long your bot holds each trade reveals its trading personality. Each bar shows how many trades lasted a certain number of bars. When there are many distinct durations, values are grouped into ranges for readability.\n\nHow to read it:\n\u{2022} X-axis = number of bars held (or range, e.g. \"10-19\")\n\u{2022} Y-axis = how many trades lasted that long\n\u{2022} The brightest bar is the most common duration\n\u{2022} Count labels above each bar show exact numbers\n\nPatterns:\n\u{2022} One dominant bucket = strategy has a consistent rhythm. If it's the lowest range, exits are triggering quickly — SL/TP may be tight relative to volatility. If it's a higher range, the strategy lets trades breathe\n\u{2022} Spread across many ranges = variable hold times, strategy behavior changes with market conditions\n\u{2022} Two peaks (bimodal) = some trades exit quickly, others ride much longer — could indicate two different market regimes or a mix of SL and TP exits at different speeds\n\nWhat to do with this:\n\u{2022} If the tallest bar is in the lowest range, most trades are exiting quickly — your SL/TP brackets may be too tight relative to volatility. The ATR tool can help calibrate\n\u{2022} If the tallest bar is in a higher range, trades are holding for extended periods — consider overnight/weekend exposure risk in live trading\n\u{2022} A very uniform distribution (one tall bar) means SL or TP is being hit at a consistent speed — check the Exit Reasons chart to see which one\n\nPro tip: Focus on the tallest bar — that's your most common hold time and the best predictor of typical market exposure. If the tallest bar is far from the others, your strategy has a dominant rhythm. If bars are spread evenly, hold times are unpredictable — which makes position sizing and risk planning harder."
         ) {
             let buckets = buildDurationBuckets()
             let maxBucket = buckets.max(by: { $0.count < $1.count })
-            Chart(buckets, id: \.label) { bucket in
-                BarMark(
-                    x: .value("Bars", bucket.label),
-                    y: .value("Count", bucket.count)
-                )
-                .foregroundStyle(
-                    bucket.label == maxBucket?.label
-                        ? .blue
-                        : .blue.opacity(0.5)
-                )
-                .cornerRadius(3)
-                .annotation(position: .top, spacing: 2) {
-                    if bucket.count > 0 {
-                        Text("\(bucket.count)")
-                            .font(.system(size: 8, weight: .semibold))
-                            .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 12) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.left.and.right")
+                            .font(.caption2).foregroundStyle(.blue)
+                        Text("Bars held")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.up.and.down")
+                            .font(.caption2).foregroundStyle(.blue)
+                        Text("Trade count")
+                            .font(.caption2).foregroundStyle(.secondary)
                     }
                 }
+                Chart(buckets, id: \.label) { bucket in
+                    BarMark(
+                        x: .value("Bars", bucket.label),
+                        y: .value("Count", bucket.count)
+                    )
+                    .foregroundStyle(
+                        bucket.label == maxBucket?.label
+                            ? .blue
+                            : .blue.opacity(0.5)
+                    )
+                    .cornerRadius(3)
+                    .annotation(position: .top, spacing: 2) {
+                        if bucket.count > 0 {
+                            Text("\(bucket.count)")
+                                .font(.system(size: 8, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .chartXAxisLabel("Bars held")
+                .chartYAxisLabel("Trades")
+                .frame(height: 200)
             }
-            .chartXAxisLabel("Duration (bars)")
-            .frame(height: 220)
         }
     }
 
     private struct DurationBucket {
         let label: String
         let count: Int
+        let sortKey: Int
     }
 
     private func buildDurationBuckets() -> [DurationBucket] {
-        var counts: [Int: Int] = [:]
+        var rawCounts: [Int: Int] = [:]
         for trade in result.trades {
-            counts[trade.barCount, default: 0] += 1
+            rawCounts[trade.barCount, default: 0] += 1
         }
-        return counts.keys.sorted().map { DurationBucket(label: "\($0)", count: counts[$0]!) }
+
+        let distinctValues = rawCounts.keys.sorted()
+
+        // If 12 or fewer distinct values, show each individually
+        if distinctValues.count <= 12 {
+            return distinctValues.map {
+                DurationBucket(label: "\($0)", count: rawCounts[$0]!, sortKey: $0)
+            }
+        }
+
+        // Otherwise, bucket into ranges scaled to keep ≤ 12 buckets
+        let maxVal = distinctValues.last ?? 1
+        let step: Int
+        if maxVal <= 30 { step = 3 }
+        else if maxVal <= 60 { step = 5 }
+        else if maxVal <= 120 { step = 10 }
+        else if maxVal <= 250 { step = 25 }
+        else { step = 50 }
+
+        let ranges: [(Int, Int)] = stride(from: 0, to: maxVal + step, by: step)
+            .map { ($0, min($0 + step - 1, maxVal)) }
+
+        return ranges.compactMap { (low, high) in
+            let count = rawCounts.filter { $0.key >= low && $0.key <= high }.values.reduce(0, +)
+            guard count > 0 else { return nil }
+            let label = low == high ? "\(low)" : "\(low)-\(high)"
+            return DurationBucket(label: label, count: count, sortKey: low)
+        }
     }
 
     // MARK: - 7. P&L by Time of Day
@@ -418,35 +559,63 @@ struct BacktestChartsView: View {
         chartCard(
             "P&L by Time of Day",
             subtitle: "Which hours are most profitable",
-            detail: "Markets have personality throughout the day — the open is chaotic, midday is quiet, the close gets volatile again. This chart shows which hours your strategy thrives in and which ones it should avoid.\n\n\u{1F7E2} Green bars = profitable hours\n\u{1F534} Red bars = losing hours\n\nCommon patterns:\n\u{2022} Strong at the open (9-10 AM) = strategy capitalizes on opening volatility\n\u{2022} Weak at midday (12-1 PM) = low volume chop is killing entries\n\u{2022} Strong at close (3-4 PM) = strategy benefits from end-of-day momentum\n\nWhat to do:\n\u{2022} If 1-2 hours account for all your losses, consider scheduling your bot to avoid those hours entirely\n\u{2022} If profits concentrate in one hour, the edge might be time-specific — test if it holds across different date ranges\n\nPro tip: Times are in your local timezone. If trading global markets, consider what's happening at that hour in the contract's native exchange timezone."
+            detail: "Markets have personality throughout the day — the open is chaotic, midday is quiet, the close gets volatile again. This chart shows which time periods your strategy thrives in and which ones it should avoid. When many hours are active, they are grouped into blocks for readability.\n\n\u{1F7E2} Green bars = profitable periods\n\u{1F534} Red bars = losing periods\n\nCommon patterns:\n\u{2022} Strong at the open = strategy capitalizes on opening volatility\n\u{2022} Weak at midday = low volume chop is killing entries\n\u{2022} Strong at close = strategy benefits from end-of-day momentum\n\nWhat to do:\n\u{2022} If 1-2 periods account for all your losses, consider scheduling your bot to avoid those times entirely\n\u{2022} If profits concentrate in one period, the edge might be time-specific — test if it holds across different date ranges\n\nPro tip: Times are in your local timezone. The best and worst performing periods are annotated with their dollar values. If trading global markets, consider what's happening at that time in the contract's native exchange timezone."
         ) {
             let hourData = buildTimeOfDayData()
             let bestHour = hourData.max(by: { $0.pnl < $1.pnl })
             let worstHour = hourData.min(by: { $0.pnl < $1.pnl })
+            VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 12) {
+                HStack(spacing: 4) {
+                    Circle().fill(.green).frame(width: 8, height: 8)
+                    Text("Profitable")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+                HStack(spacing: 4) {
+                    Circle().fill(.red).frame(width: 8, height: 8)
+                    Text("Losing")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+            }
             Chart {
                 // Zero line
                 RuleMark(y: .value("Zero", 0))
                     .foregroundStyle(.secondary.opacity(0.3))
                     .lineStyle(StrokeStyle(dash: [4, 4]))
                 ForEach(hourData, id: \.hour) { item in
+                    let isBestOrWorst = item.hour == bestHour?.hour || item.hour == worstHour?.hour
+                    let opacity: Double = isBestOrWorst ? 1.0 : 0.5
                     BarMark(
                         x: .value("Hour", item.label),
                         y: .value("P&L", item.pnl)
                     )
-                    .foregroundStyle(item.pnl >= 0 ? .green.opacity(0.8) : .red.opacity(0.8))
+                    .foregroundStyle(item.pnl >= 0 ? .green.opacity(opacity) : .red.opacity(opacity))
                     .cornerRadius(3)
                     .annotation(position: item.pnl >= 0 ? .top : .bottom, spacing: 2) {
-                        if item.hour == bestHour?.hour || item.hour == worstHour?.hour {
-                            Text(item.pnl, format: .currency(code: "USD").precision(.fractionLength(0)))
-                                .font(.system(size: 8, weight: .bold))
-                                .foregroundStyle(item.pnl >= 0 ? .green : .red)
-                        }
+                        Text(item.pnl, format: .currency(code: "USD").precision(.fractionLength(0)))
+                            .font(.system(size: isBestOrWorst ? 9 : 8, weight: isBestOrWorst ? .bold : .medium))
+                            .foregroundStyle(item.pnl >= 0 ? .green : .red)
                     }
                 }
             }
             .chartYAxis { currencyAxis }
-            .chartXAxisLabel("Hour (local)")
+            .chartXAxis {
+                AxisMarks(values: hourData.map(\.label)) { value in
+                    AxisGridLine()
+                    AxisTick()
+                    AxisValueLabel(anchor: .top) {
+                        if let label = value.as(String.self) {
+                            Text(label)
+                                .font(.system(size: 9))
+                                .fixedSize()
+                                .padding(.top, 4)
+                        }
+                    }
+                }
+            }
             .frame(height: 220)
+            .padding(.bottom, 8)
+            }
         }
     }
 
@@ -465,13 +634,45 @@ struct BacktestChartsView: View {
                 hourPnL[hour, default: 0] += trade.pnlDollars
             }
         }
-        return hourPnL.keys.sorted().map { hour in
-            let formatter = DateFormatter()
-            formatter.dateFormat = "ha"
-            let components = DateComponents(hour: hour)
-            let label = calendar.date(from: components).map { formatter.string(from: $0) } ?? "\(hour)"
-            return HourPnL(hour: hour, label: label, pnl: hourPnL[hour]!)
+
+        let activeHours = hourPnL.keys.sorted()
+        guard !activeHours.isEmpty else { return [] }
+
+        let minHour = activeHours.first!
+        let maxHour = activeHours.last!
+        let span = maxHour - minHour + 1
+
+        // If 8 or fewer active hours, show each individually
+        if activeHours.count <= 8 {
+            return activeHours.map { hour in
+                HourPnL(hour: hour, label: formatHourLabel(hour), pnl: hourPnL[hour]!)
+            }
         }
+
+        // Divide into exactly 8 buckets (or fewer if span < 8)
+        let maxBuckets = min(8, span)
+        let baseStep = span / maxBuckets
+        let remainder = span % maxBuckets
+
+        var buckets: [HourPnL] = []
+        var h = minHour
+        for i in 0..<maxBuckets {
+            // Distribute remainder across first N buckets (1 extra hour each)
+            let thisStep = baseStep + (i < remainder ? 1 : 0)
+            let end = h + thisStep - 1
+            let pnl = (h...end).reduce(0.0) { $0 + (hourPnL[$1] ?? 0) }
+            let endLabel = formatHourLabel(min(end + 1, 24) % 24)
+            let label = h == end ? formatHourLabel(h) : "\(formatHourLabel(h))-\(endLabel)"
+            buckets.append(HourPnL(hour: h, label: label, pnl: pnl))
+            h += thisStep
+        }
+        return buckets
+    }
+
+    private func formatHourLabel(_ hour: Int) -> String {
+        let h = hour % 12 == 0 ? 12 : hour % 12
+        let suffix = hour < 12 ? "a" : "p"
+        return "\(h)\(suffix)"
     }
 
     // MARK: - 8. Rolling Win Rate
@@ -482,68 +683,146 @@ struct BacktestChartsView: View {
             subtitle: "20-trade sliding window win percentage",
             detail: "Your overall win rate is just one number — this chart shows how it evolves over time. A strategy with 55% win rate overall might have spent half the backtest at 30% before a hot streak pulled it up.\n\n\u{2022} Dashed line = 50% (breakeven win rate)\n\u{1F7E2} Above the line = winning more than losing\n\u{1F534} Below the line = losing more than winning\n\nWhat to watch for:\n\u{2022} Stable above 50% = consistent edge, reliable strategy\n\u{2022} Trending downward = strategy may be curve-fit to early data and degrading\n\u{2022} Wild swings = unstable edge, may not survive live trading\n\u{2022} Dips then recovers = normal variance, but check if dips correlate with specific market conditions\n\nPro tip: A strategy with 40% win rate can still be very profitable if the average win is 2x+ the average loss. Don't chase high win rates — chase high expectancy (win rate x avg win - loss rate x avg loss)."
         ) {
-            let data = buildRollingWinRate(window: 20)
-            Chart {
-                // 50% reference line
-                RuleMark(y: .value("50%", 50))
-                    .foregroundStyle(.secondary.opacity(0.4))
-                    .lineStyle(StrokeStyle(dash: [6, 4]))
-                    .annotation(position: .trailing, alignment: .leading) {
-                        Text("50%")
-                            .font(.system(size: 8, weight: .medium))
-                            .foregroundStyle(.secondary)
-                    }
-                // Win rate area fill
-                ForEach(Array(data.enumerated()), id: \.offset) { index, rate in
-                    AreaMark(
-                        x: .value("Trade", index + 1),
-                        y: .value("Win %", rate)
-                    )
-                    .foregroundStyle(
-                        .linearGradient(
-                            colors: [rate >= 50 ? .green.opacity(0.15) : .red.opacity(0.15), .clear],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
-                    .interpolationMethod(.catmullRom)
-                    LineMark(
-                        x: .value("Trade", index + 1),
-                        y: .value("Win %", rate)
-                    )
-                    .foregroundStyle(rate >= 50 ? .green : .red)
-                    .lineStyle(StrokeStyle(lineWidth: 2.5))
-                    .interpolationMethod(.catmullRom)
-                }
-                // Final value marker
-                if let last = data.last {
-                    PointMark(
-                        x: .value("Trade", data.count),
-                        y: .value("Win %", last)
-                    )
-                    .foregroundStyle(last >= 50 ? .green : .red)
-                    .symbolSize(40)
-                    .annotation(position: .top, spacing: 4) {
-                        Text("\(Int(round(last)))%")
-                            .font(.caption2.weight(.bold))
-                            .foregroundStyle(last >= 50 ? .green : .red)
-                    }
-                }
-            }
-            .chartYAxis {
-                AxisMarks { value in
-                    AxisGridLine()
-                    AxisValueLabel {
-                        if let v = value.as(Double.self) {
-                            Text("\(Int(v))%")
-                        }
-                    }
-                }
-            }
-            .chartYScale(domain: 0...100)
-            .chartXAxisLabel("Trade #")
-            .frame(height: 220)
+            rollingWinRateChartContent
         }
+    }
+
+    private var rollingWinRateChartContent: some View {
+        let rawData = buildRollingWinRate(window: 20)
+        let data = buildWinRateWithCrossings(rawData)
+        let finalValue = data.last?.value ?? 0
+        let maxX = data.last?.x ?? 1
+
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 12) {
+                HStack(spacing: 4) {
+                    Text("Final Win Rate:")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    Text("\(Int(round(finalValue)))%")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(finalValue >= 50 ? .green : .red)
+                }
+                HStack(spacing: 4) {
+                    Circle().fill(.green).frame(width: 8, height: 8)
+                    Text("> 50%")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+                HStack(spacing: 4) {
+                    Circle().fill(.red).frame(width: 8, height: 8)
+                    Text("< 50%")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+            }
+            winRateChart(data: data, maxX: maxX)
+        }
+    }
+
+    private struct WinRatePoint {
+        let x: Double
+        let value: Double
+    }
+
+    private struct WinRateRun {
+        let points: [WinRatePoint]
+        let isBelow50: Bool
+    }
+
+    private func buildWinRateWithCrossings(_ raw: [Double]) -> [WinRatePoint] {
+        guard !raw.isEmpty else { return [] }
+        var points: [WinRatePoint] = []
+        for i in 0..<raw.count {
+            let prev = i == 0 ? raw[0] : raw[i - 1]
+            let curr = raw[i]
+            let prevX = i == 0 ? Double(i + 1) : Double(i)
+            let currX = Double(i + 1)
+            if i > 0 && ((prev > 50 && curr < 50) || (prev < 50 && curr > 50)) {
+                let fraction = (prev - 50) / (prev - curr)
+                let crossX = prevX + fraction * (currX - prevX)
+                points.append(WinRatePoint(x: crossX, value: 50))
+            }
+            points.append(WinRatePoint(x: currX, value: curr))
+        }
+        return points
+    }
+
+    private func buildWinRateRuns(from data: [WinRatePoint]) -> [WinRateRun] {
+        guard data.count >= 2 else { return [] }
+        var runs: [WinRateRun] = []
+        var currentPoints: [WinRatePoint] = [data[0]]
+        var currentBelow = data[0].value < 50
+
+        for i in 1..<data.count {
+            let pt = data[i]
+            let isBelow = pt.value < 50
+            if isBelow == currentBelow || pt.value == 50 {
+                currentPoints.append(pt)
+            } else {
+                currentPoints.append(pt)
+                runs.append(WinRateRun(points: currentPoints, isBelow50: currentBelow))
+                currentPoints = [pt]
+                currentBelow = isBelow
+            }
+        }
+        if !currentPoints.isEmpty {
+            runs.append(WinRateRun(points: currentPoints, isBelow50: currentBelow))
+        }
+        return runs
+    }
+
+    @ViewBuilder
+    private func winRateChart(data: [WinRatePoint], maxX: Double) -> some View {
+        Chart {
+            // 50% reference line
+            RuleMark(y: .value("50%", 50))
+                .foregroundStyle(.secondary.opacity(0.4))
+                .lineStyle(StrokeStyle(dash: [6, 4]))
+                .annotation(position: .trailing, alignment: .leading) {
+                    Text("50%")
+                        .font(.system(size: 8, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
+            // Background zones: green above 50%, red below
+            RectangleMark(yStart: .value("y", 50), yEnd: .value("y", 100))
+                .foregroundStyle(.green.opacity(0.06))
+            RectangleMark(yStart: .value("y", 0), yEnd: .value("y", 50))
+                .foregroundStyle(.red.opacity(0.06))
+            // Line segments
+            ForEach(0..<max(data.count - 1, 0), id: \.self) { i in
+                let startVal = data[i].value
+                let endVal = data[i + 1].value
+                let isBelow = (startVal < 50 || endVal < 50) && !(startVal == 50 && endVal >= 50)
+                let color: Color = isBelow ? .red : .green
+                LineMark(
+                    x: .value("Trade", data[i].x),
+                    y: .value("Win %", data[i].value),
+                    series: .value("seg", i)
+                )
+                .foregroundStyle(color)
+                .lineStyle(StrokeStyle(lineWidth: 2.5))
+                LineMark(
+                    x: .value("Trade", data[i + 1].x),
+                    y: .value("Win %", data[i + 1].value),
+                    series: .value("seg", i)
+                )
+                .foregroundStyle(color)
+                .lineStyle(StrokeStyle(lineWidth: 2.5))
+            }
+        }
+        .chartYAxis {
+            AxisMarks { value in
+                AxisGridLine()
+                AxisValueLabel {
+                    if let v = value.as(Double.self) {
+                        Text("\(Int(v))%")
+                    }
+                }
+            }
+        }
+        .chartXScale(domain: 1...maxX)
+        .chartYScale(domain: 0...100)
+        .chartXAxisLabel("Trade #")
+        .frame(height: 210)
     }
 
     private func buildRollingWinRate(window: Int) -> [Double] {
@@ -575,27 +854,52 @@ struct BacktestChartsView: View {
             let streaks = buildStreakData()
             let longestWin = streaks.filter(\.isWin).max(by: { $0.length < $1.length })
             let longestLoss = streaks.filter { !$0.isWin }.max(by: { $0.length < $1.length })
+            let maxWin = longestWin?.length ?? 1
+            let maxLoss = longestLoss?.length ?? 1
+            let yBound = max(maxWin, maxLoss) + 1
+            let streakCount = streaks.count
+            VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 12) {
+                HStack(spacing: 4) {
+                    Circle().fill(.green).frame(width: 8, height: 8)
+                    Text("Win streak")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+                HStack(spacing: 4) {
+                    Circle().fill(.red).frame(width: 8, height: 8)
+                    Text("Loss streak")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.up.and.down")
+                        .font(.caption2).foregroundStyle(.blue)
+                    Text("Streak length")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+            }
             Chart {
                 // Zero line
                 RuleMark(y: .value("Zero", 0))
                     .foregroundStyle(.secondary.opacity(0.3))
                     .lineStyle(StrokeStyle(dash: [4, 4]))
                 ForEach(streaks, id: \.index) { item in
+                    let isHighlight = item.index == longestWin?.index || item.index == longestLoss?.index
+                    let opacity: Double = isHighlight ? 1.0 : 0.5
                     BarMark(
                         x: .value("Streak", item.index),
                         y: .value("Length", item.isWin ? item.length : -item.length)
                     )
-                    .foregroundStyle(item.isWin ? .green.opacity(0.8) : .red.opacity(0.8))
+                    .foregroundStyle(item.isWin ? .green.opacity(opacity) : .red.opacity(opacity))
                     .cornerRadius(3)
                     .annotation(position: item.isWin ? .top : .bottom, spacing: 2) {
-                        if item.index == longestWin?.index || item.index == longestLoss?.index {
-                            Text("\(item.length)")
-                                .font(.system(size: 9, weight: .bold))
-                                .foregroundStyle(item.isWin ? .green : .red)
-                        }
+                        Text("\(item.length)")
+                            .font(.system(size: isHighlight ? 9 : 8, weight: isHighlight ? .bold : .medium))
+                            .foregroundStyle(item.isWin ? .green : .red)
                     }
                 }
             }
+            .chartXScale(domain: -1...(streakCount))
+            .chartYScale(domain: (-yBound)...yBound)
             .chartYAxis {
                 AxisMarks { value in
                     AxisGridLine()
@@ -606,8 +910,9 @@ struct BacktestChartsView: View {
                     }
                 }
             }
-            .chartXAxisLabel("Streak #")
+            .chartXAxis(.hidden)
             .frame(height: 220)
+            }
         }
     }
 
