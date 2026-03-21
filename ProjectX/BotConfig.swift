@@ -99,7 +99,7 @@ final class BotConfig {
     var opStartMinute: Int = 30
     var opEndHour: Int = 16
     var opEndMinute: Int = 0
-    var sleepWindows: String = "[{\"sh\":16,\"sm\":0,\"eh\":18,\"em\":0,\"cp\":true}]"  // Default: Market Close 4PM-6PM, close position
+    var sleepWindows: String = "[{\"n\":\"Market Close\",\"sh\":16,\"sm\":0,\"eh\":18,\"em\":0,\"cp\":true}]"
 
     // Many-to-many: indicators used by this bot
     @Relationship(inverse: \IndicatorConfig.bots)
@@ -191,13 +191,24 @@ final class BotConfig {
 
 struct SleepWindow: Codable, Identifiable, Equatable {
     var id = UUID()
+    var name: String
     var startHour: Int
+
+    static func == (lhs: SleepWindow, rhs: SleepWindow) -> Bool {
+        lhs.name == rhs.name
+        && lhs.startHour == rhs.startHour
+        && lhs.startMinute == rhs.startMinute
+        && lhs.endHour == rhs.endHour
+        && lhs.endMinute == rhs.endMinute
+        && lhs.closePosition == rhs.closePosition
+    }
     var startMinute: Int
     var endHour: Int
     var endMinute: Int
     var closePosition: Bool
 
     enum CodingKeys: String, CodingKey {
+        case name = "n"
         case startHour = "sh"
         case startMinute = "sm"
         case endHour = "eh"
@@ -205,7 +216,8 @@ struct SleepWindow: Codable, Identifiable, Equatable {
         case closePosition = "cp"
     }
 
-    init(startHour: Int = 12, startMinute: Int = 0, endHour: Int = 13, endMinute: Int = 0, closePosition: Bool = true) {
+    init(name: String = "Sleep", startHour: Int = 12, startMinute: Int = 0, endHour: Int = 13, endMinute: Int = 0, closePosition: Bool = true) {
+        self.name = name
         self.startHour = startHour
         self.startMinute = startMinute
         self.endHour = endHour
@@ -215,6 +227,7 @@ struct SleepWindow: Codable, Identifiable, Equatable {
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.name = (try? c.decode(String.self, forKey: .name)) ?? "Sleep"
         self.startHour = try c.decode(Int.self, forKey: .startHour)
         self.startMinute = try c.decode(Int.self, forKey: .startMinute)
         self.endHour = try c.decode(Int.self, forKey: .endHour)
@@ -224,6 +237,7 @@ struct SleepWindow: Codable, Identifiable, Equatable {
 
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(name, forKey: .name)
         try c.encode(startHour, forKey: .startHour)
         try c.encode(startMinute, forKey: .startMinute)
         try c.encode(endHour, forKey: .endHour)

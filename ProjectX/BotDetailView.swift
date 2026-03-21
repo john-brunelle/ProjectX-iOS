@@ -43,6 +43,7 @@ struct BotDetailView: View {
     @State private var opEndTime = Calendar.current.date(from: DateComponents(hour: 16, minute: 0))!
     @State private var editSleepWindows: [SleepWindow] = []
     @State private var showAddSleepWindow = false
+    @State private var expandedInfoPanels: Set<String> = []
     @State private var newSleepStart = Calendar.current.date(from: DateComponents(hour: 12, minute: 0))!
     @State private var newSleepEnd = Calendar.current.date(from: DateComponents(hour: 13, minute: 0))!
 
@@ -61,9 +62,6 @@ struct BotDetailView: View {
     // ── Backtest state ──
     @State private var daysBack = 30
     @State private var barLimit = 5000
-    @State private var rthOnly = false
-    @State private var rthStartTime = Calendar.current.date(from: DateComponents(hour: 9, minute: 30))!
-    @State private var rthEndTime = Calendar.current.date(from: DateComponents(hour: 16, minute: 0))!
     @State private var isBacktesting = false
     @State private var backtestResult: BacktestResult?
     @State private var backtestError: String?
@@ -329,6 +327,7 @@ struct BotDetailView: View {
 
         // ── Start ─────────────────────
         Section {
+            infoPanel("Start Bot", "Start the bot to begin live signal evaluation and automated trading. The bot will poll for new bars, evaluate your indicators, and place orders when signals fire. You must assign at least one account and one indicator before starting.")
             let assignedAccountIds = allAssignments.filter { $0.botId == bot.id }.map(\.accountId)
             let stoppedAccountIds = assignedAccountIds.filter { !runningAccountIds.contains($0) }
             let canStart = bot.isActive && !bot.indicators.isEmpty && !stoppedAccountIds.isEmpty
@@ -344,6 +343,8 @@ struct BotDetailView: View {
                     .foregroundStyle(canStart ? .green : .gray)
             }
             .disabled(!canStart)
+        } header: {
+            sectionHeaderWithInfo("Start Bot")
         } footer: {
             let assignedAccountIds = allAssignments.filter { $0.botId == bot.id }.map(\.accountId)
             let stoppedAccountIds = assignedAccountIds.filter { !runningAccountIds.contains($0) }
@@ -436,7 +437,8 @@ struct BotDetailView: View {
 
     @ViewBuilder
     private var configSections: some View {
-        Section("Contract") {
+        Section {
+            infoPanel("Contract", "Configure what and how your bot trades. Quantity sets the number of contracts per trade. Contract selects the market instrument. Bar Size determines the timeframe for indicator evaluation — smaller bars mean more frequent signals, larger bars mean less noise.")
             Stepper("Quantity: \(quantity)", value: $quantity, in: 1...100)
                 .disabled(isRunning)
 
@@ -477,12 +479,13 @@ struct BotDetailView: View {
                         Text(unit.label).tag(unit)
                     }
                 }
-                .pickerStyle(.segmented)
                 .disabled(isRunning)
 
                 Stepper("Value: \(barUnitNumber)", value: $barUnitNumber, in: 1...60)
                     .disabled(isRunning)
             }
+        } header: {
+            sectionHeaderWithInfo("Contract")
         }
     }
 
@@ -491,6 +494,7 @@ struct BotDetailView: View {
     @ViewBuilder
     private var riskSections: some View {
         Section {
+            infoPanel("Risk Management", "Control your downside risk per trade. The ATR tool calculates market volatility to help calibrate stop loss and take profit levels. Stop Loss automatically exits a losing trade at a set number of ticks. Take Profit locks in gains at a target. Trade Direction filters signals to long-only, short-only, or both.")
             // ── ATR Tool ──────────────────────────
             VStack(spacing: 0) {
                 // ATR header row — always visible
@@ -644,7 +648,7 @@ struct BotDetailView: View {
             .pickerStyle(.segmented)
             .disabled(isRunning)
         } header: {
-            Text("Risk Management")
+            sectionHeaderWithInfo("Risk Management")
         }
     }
 
@@ -652,7 +656,48 @@ struct BotDetailView: View {
 
     @ViewBuilder
     private var operatingHoursSection: some View {
-        Section("Operating Hours") {
+        Section {
+            // Sleep timer info expandable
+            if expandedInfoPanels.contains("Operating Hours") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Operating hours control when your bot evaluates signals and places trades. Outside these hours, the bot pauses — it won't open new positions but continues tracking any open ones.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("Sleep Timers")
+                        .font(.caption.weight(.semibold))
+                    Text("Sleep timers are scheduled breaks within your operating hours. Use them for low-volume periods, lunch breaks, or market transitions where you don't want the bot trading.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("Each sleep timer has a name you can edit, and a badge you can tap to toggle:")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    HStack(spacing: 6) {
+                        Text("Closes")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.green)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(.green.opacity(0.15), in: Capsule())
+                        Text("Position and open orders are closed before sleeping. Use this for end-of-session or when you want a clean slate.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    HStack(spacing: 6) {
+                        Text("Holds")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(.secondary.opacity(0.12), in: Capsule())
+                        Text("Position stays open during sleep. The bot resumes monitoring when the window ends. Use this for short breaks where you want to hold through.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.vertical, 4)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+
             // Mode picker: RTH / Extended / 24/7
             Picker("Mode", selection: Binding(
                 get: { operatingMode },
@@ -695,18 +740,36 @@ struct BotDetailView: View {
             // Sleep Windows
             if !editSleepWindows.isEmpty {
                 ForEach($editSleepWindows) { $window in
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack {
-                            Image(systemName: "moon.zzz.fill")
-                                .foregroundStyle(.orange)
-                                .font(.caption)
-                            Text(window.label)
-                                .font(.subheadline)
-                            Spacer()
-                        }
-                        Toggle("Close Position", isOn: $window.closePosition)
+                    HStack {
+                        Image(systemName: "moon.zzz.fill")
+                            .foregroundStyle(.orange)
                             .font(.caption)
-                            .disabled(isRunning)
+                        if isRunning {
+                            Text(window.name)
+                                .font(.subheadline.weight(.medium))
+                        } else {
+                            TextField("Name", text: $window.name)
+                                .font(.subheadline.weight(.medium))
+                        }
+                        Spacer()
+                        Text(window.label)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Button {
+                            guard !isRunning else { return }
+                            window.closePosition.toggle()
+                        } label: {
+                            Text(window.closePosition ? "Closes" : "Holds")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(window.closePosition ? .green : .secondary)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(
+                                    window.closePosition ? .green.opacity(0.15) : .secondary.opacity(0.12),
+                                    in: Capsule()
+                                )
+                        }
+                        .buttonStyle(.plain)
                     }
                     .swipeActions(edge: .trailing) {
                         if !isRunning {
@@ -736,6 +799,7 @@ struct BotDetailView: View {
                             Button("Add") {
                                 let cal = Calendar.current
                                 let window = SleepWindow(
+                                    name: "Break \(editSleepWindows.count + 1)",
                                     startHour: cal.component(.hour, from: newSleepStart),
                                     startMinute: cal.component(.minute, from: newSleepStart),
                                     endHour: cal.component(.hour, from: newSleepEnd),
@@ -756,10 +820,21 @@ struct BotDetailView: View {
                     }
                 }
             }
+        } header: {
+            sectionHeaderWithInfo("Operating Hours")
         }
     }
 
     /// Auto-switch to custom mode when user manually edits times
+    private var editOperatingHoursLabel: String {
+        let cal = Calendar.current
+        let sh = cal.component(.hour, from: opStartTime)
+        let sm = cal.component(.minute, from: opStartTime)
+        let eh = cal.component(.hour, from: opEndTime)
+        let em = cal.component(.minute, from: opEndTime)
+        return "\(SleepWindow.formatTime(hour: sh, minute: sm)) – \(SleepWindow.formatTime(hour: eh, minute: em))"
+    }
+
     private func autoSwitchToCustom() {
         guard operatingMode != "24/7" && operatingMode != "custom" else { return }
         let cal = Calendar.current
@@ -776,68 +851,85 @@ struct BotDetailView: View {
         }
     }
 
-    /// Visual timeline bar showing active hours, sleep windows, and inactive periods
+    /// Visual timeline bar scoped to the operating hours window
     private var operatingHoursBar: some View {
         let cal = Calendar.current
         let startMin = cal.component(.hour, from: opStartTime) * 60 + cal.component(.minute, from: opStartTime)
         let endMin = cal.component(.hour, from: opEndTime) * 60 + cal.component(.minute, from: opEndTime)
-        let isOvernight = endMin <= startMin
+        let is24_7 = operatingMode == "24/7"
+
+        // Determine the visible window
+        let windowStart: Int = is24_7 ? 0 : startMin
+        let windowEnd: Int = is24_7 ? 1440 : endMin
+        let windowSpan: Double = is24_7 ? 1440 : {
+            if endMin <= startMin { return Double(1440 - startMin + endMin) }  // overnight
+            return Double(endMin - startMin)
+        }()
+
+        // Convert a minute-of-day to a position within the visible window
+        func xFraction(for minute: Int) -> Double {
+            if is24_7 { return Double(minute) / 1440.0 }
+            if endMin <= startMin {
+                // Overnight: remap so startMin=0, wrapping at midnight
+                let adjusted = minute >= startMin ? minute - startMin : minute + (1440 - startMin)
+                return Double(adjusted) / windowSpan
+            }
+            return Double(minute - startMin) / windowSpan
+        }
+
+        func formatHour(_ min: Int) -> String {
+            let h = (min / 60) % 24
+            let m = min % 60
+            let hour12 = h % 12 == 0 ? 12 : h % 12
+            let suffix = h < 12 ? "a" : "p"
+            return m == 0 ? "\(hour12)\(suffix)" : "\(hour12):\(String(format: "%02d", m))\(suffix)"
+        }
 
         return VStack(spacing: 4) {
             GeometryReader { geo in
-                let totalMinutes = 1440.0
                 let width = geo.size.width
 
-                let is24_7 = operatingMode == "24/7"
-
                 ZStack(alignment: .leading) {
-                    // Inactive background
+                    // Active background (full bar = operating window)
                     RoundedRectangle(cornerRadius: 4)
-                        .fill(is24_7 ? Color.green.opacity(0.4) : Color.secondary.opacity(0.15))
+                        .fill(Color.green.opacity(0.3))
                         .frame(height: 20)
 
-                    // Active hours (only for non-24/7)
-                    if !is24_7 {
-                        if isOvernight {
-                            RoundedRectangle(cornerRadius: 4)
-                                .fill(Color.green.opacity(0.4))
-                                .frame(width: max(0, width * CGFloat(1440 - startMin) / CGFloat(totalMinutes)), height: 20)
-                                .offset(x: width * CGFloat(startMin) / CGFloat(totalMinutes))
-                            RoundedRectangle(cornerRadius: 4)
-                                .fill(Color.green.opacity(0.4))
-                                .frame(width: max(0, width * CGFloat(endMin) / CGFloat(totalMinutes)), height: 20)
-                        } else {
-                            RoundedRectangle(cornerRadius: 4)
-                                .fill(Color.green.opacity(0.4))
-                                .frame(width: max(0, width * CGFloat(endMin - startMin) / CGFloat(totalMinutes)), height: 20)
-                                .offset(x: width * CGFloat(startMin) / CGFloat(totalMinutes))
-                        }
-                    }
-
-                    // Sleep windows
+                    // Sleep windows overlaid
                     ForEach(editSleepWindows) { window in
                         let sleepStart = window.startHour * 60 + window.startMinute
                         let sleepEnd = window.endHour * 60 + window.endMinute
+                        let x = xFraction(for: sleepStart)
+                        let sleepSpan = sleepEnd > sleepStart ? Double(sleepEnd - sleepStart) : Double(1440 - sleepStart + sleepEnd)
+                        let w = sleepSpan / windowSpan
                         RoundedRectangle(cornerRadius: 2)
                             .fill(Color.orange.opacity(0.5))
-                            .frame(width: max(0, width * CGFloat(sleepEnd - sleepStart) / CGFloat(totalMinutes)), height: 20)
-                            .offset(x: width * CGFloat(sleepStart) / CGFloat(totalMinutes))
+                            .frame(width: max(0, width * CGFloat(w)), height: 20)
+                            .offset(x: width * CGFloat(x))
                     }
                 }
             }
             .frame(height: 20)
 
-            // Time labels
+            // Time labels — show start, end, and midpoint
             HStack {
-                Text("12a")
+                Text(formatHour(windowStart))
                 Spacer()
-                Text("6a")
-                Spacer()
-                Text("12p")
-                Spacer()
-                Text("6p")
-                Spacer()
-                Text("12a")
+                if !is24_7 {
+                    let midMin = endMin <= startMin
+                        ? (startMin + Int(windowSpan) / 2) % 1440
+                        : startMin + Int(windowSpan) / 2
+                    Text(formatHour(midMin))
+                    Spacer()
+                } else {
+                    Text("6a")
+                    Spacer()
+                    Text("12p")
+                    Spacer()
+                    Text("6p")
+                    Spacer()
+                }
+                Text(formatHour(windowEnd % 1440))
             }
             .font(.system(size: 8))
             .foregroundStyle(.secondary)
@@ -845,16 +937,12 @@ struct BotDetailView: View {
             // Legend
             HStack(spacing: 12) {
                 HStack(spacing: 4) {
-                    RoundedRectangle(cornerRadius: 2).fill(.green.opacity(0.4)).frame(width: 12, height: 8)
+                    RoundedRectangle(cornerRadius: 2).fill(.green.opacity(0.3)).frame(width: 12, height: 8)
                     Text("Active").font(.system(size: 8)).foregroundStyle(.secondary)
                 }
                 HStack(spacing: 4) {
                     RoundedRectangle(cornerRadius: 2).fill(.orange.opacity(0.5)).frame(width: 12, height: 8)
                     Text("Sleep").font(.system(size: 8)).foregroundStyle(.secondary)
-                }
-                HStack(spacing: 4) {
-                    RoundedRectangle(cornerRadius: 2).fill(.secondary.opacity(0.15)).frame(width: 12, height: 8)
-                    Text("Off").font(.system(size: 8)).foregroundStyle(.secondary)
                 }
             }
         }
@@ -865,6 +953,7 @@ struct BotDetailView: View {
     @ViewBuilder
     private var indicatorSections: some View {
         Section {
+            infoPanel("Indicators", "Indicators generate buy/sell/neutral signals that drive your bot's trading decisions. Each indicator evaluates bar data using a specific strategy (EMA crossover, RSI, etc.). When multiple indicators are selected, their signals are combined — all must agree for a trade to fire. Swipe an indicator to edit or remove it.")
             if selectedIndicatorsList.isEmpty {
                 if !isRunning {
                     Button {
@@ -917,6 +1006,19 @@ struct BotDetailView: View {
         } header: {
             HStack {
                 Text("Indicators (\(selectedIndicatorIDs.count))")
+                Button {
+                    withAnimation(.easeInOut(duration: 0.25)) {
+                        if expandedInfoPanels.contains("Indicators") {
+                            expandedInfoPanels.remove("Indicators")
+                        } else {
+                            expandedInfoPanels.insert("Indicators")
+                        }
+                    }
+                } label: {
+                    Image(systemName: "info.circle")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
                 Spacer()
                 if !selectedIndicatorsList.isEmpty && !isRunning {
                     Button {
@@ -1077,7 +1179,8 @@ struct BotDetailView: View {
 
     @ViewBuilder
     private var performanceSection: some View {
-        Section("Performance") {
+        Section {
+            infoPanel("Performance", "Tracks your bot's trading results. Today's P&L shows realized + unrealized profit from the current session. All Time accumulates across all sessions. Use Reset Stats to zero out counters — this doesn't affect actual trades or account balance.")
             let aggregated = runningAccountIds.reduce((0.0, 0.0, 0)) { acc, acctId in
                 let pnl = livePnL(accountId: acctId)
                 return (acc.0 + pnl.realized, acc.1 + pnl.unrealized, acc.2 + pnl.tradeCount)
@@ -1164,6 +1267,8 @@ struct BotDetailView: View {
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 4)
+        } header: {
+            sectionHeaderWithInfo("Performance")
         }
     }
 
@@ -1209,12 +1314,14 @@ struct BotDetailView: View {
     private var backtestSections: some View {
         if !isRunning && !isAIOnly {
             Section {
-                Toggle("RTH Only", isOn: $rthOnly)
-                if rthOnly {
-                    DatePicker("Start", selection: $rthStartTime, displayedComponents: .hourAndMinute)
-                        .environment(\.locale, Locale(identifier: "en_US"))
-                    DatePicker("End", selection: $rthEndTime, displayedComponents: .hourAndMinute)
-                        .environment(\.locale, Locale(identifier: "en_US"))
+                infoPanel("Backtest", "Test your bot's strategy against historical data before risking real capital. Set the lookback period (Days Back) and maximum bars to analyze. Bars are automatically filtered by your Operating Hours and Sleep Timer settings. Results show how the strategy would have performed including P&L, win rate, and detailed trade history.")
+                HStack {
+                    Image(systemName: "clock")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(operatingMode == "24/7" ? "Operating hours: 24/7 (no filter)" : "Operating hours: \(editOperatingHoursLabel)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 Stepper("Days Back: \(daysBack)", value: $daysBack, in: 1...365)
                 Stepper("Bar Limit: \(barLimit)", value: $barLimit, in: 100...20000, step: 100)
@@ -1240,6 +1347,19 @@ struct BotDetailView: View {
             } header: {
                 HStack {
                     Text("Backtest")
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.25)) {
+                            if expandedInfoPanels.contains("Backtest") {
+                                expandedInfoPanels.remove("Backtest")
+                            } else {
+                                expandedInfoPanels.insert("Backtest")
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "info.circle")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
                     Spacer()
                     if backtestResult != nil {
                         Button {
@@ -1413,23 +1533,32 @@ struct BotDetailView: View {
             limit: barLimit
         )
 
-        // Apply RTH filter if enabled
-        let bars: [Bar] = rthOnly ? {
+        // Apply operating hours filter
+        let bars: [Bar] = operatingMode != "24/7" ? {
             let cal = Calendar.current
-            let startMin = cal.component(.hour, from: rthStartTime) * 60 + cal.component(.minute, from: rthStartTime)
-            let endMin = cal.component(.hour, from: rthEndTime) * 60 + cal.component(.minute, from: rthEndTime)
+            let startMin = cal.component(.hour, from: opStartTime) * 60 + cal.component(.minute, from: opStartTime)
+            let endMin = cal.component(.hour, from: opEndTime) * 60 + cal.component(.minute, from: opEndTime)
+            let isOvernight = endMin <= startMin
             return allBars.filter { bar in
                 guard let date = BacktestEngine.parseTimestamp(bar.t) else { return true }
                 let barMin = cal.component(.hour, from: date) * 60 + cal.component(.minute, from: date)
-                return barMin >= startMin && barMin < endMin
+                let withinHours = isOvernight ? (barMin >= startMin || barMin < endMin) : (barMin >= startMin && barMin < endMin)
+                guard withinHours else { return false }
+                for window in editSleepWindows {
+                    let ss = window.startHour * 60 + window.startMinute
+                    let se = window.endHour * 60 + window.endMinute
+                    if se > ss { if barMin >= ss && barMin < se { return false } }
+                    else { if barMin >= ss || barMin < se { return false } }
+                }
+                return true
             }
         }() : allBars
 
         backtestBarCount = bars.count
 
         guard !bars.isEmpty else {
-            backtestError = rthOnly
-                ? "No bars found within the RTH window for the selected configuration."
+            backtestError = operatingMode != "24/7"
+                ? "No bars found within operating hours for the selected configuration."
                 : "No bars returned for the selected configuration."
             isBacktesting = false
             return
@@ -1633,7 +1762,7 @@ struct BotDetailView: View {
         let decoded = bot.decodedSleepWindows
         if decoded.isEmpty {
             // Seed default market close sleep window for existing bots
-            editSleepWindows = [SleepWindow(startHour: 16, startMinute: 0, endHour: 18, endMinute: 0)]
+            editSleepWindows = [SleepWindow(name: "Market Close", startHour: 16, startMinute: 0, endHour: 18, endMinute: 0)]
         } else {
             editSleepWindows = decoded
         }
@@ -1708,6 +1837,38 @@ struct BotDetailView: View {
             Text(label).foregroundStyle(.secondary)
             Spacer()
             Text(value)
+        }
+    }
+
+    // MARK: - Info Panel Helpers
+
+    private func sectionHeaderWithInfo(_ title: String) -> some View {
+        HStack {
+            Text(title)
+            Button {
+                withAnimation(.easeInOut(duration: 0.25)) {
+                    if expandedInfoPanels.contains(title) {
+                        expandedInfoPanels.remove(title)
+                    } else {
+                        expandedInfoPanels.insert(title)
+                    }
+                }
+            } label: {
+                Image(systemName: "info.circle")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func infoPanel(_ key: String, _ text: String) -> some View {
+        if expandedInfoPanels.contains(key) {
+            Text(text)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.vertical, 4)
+                .transition(.opacity.combined(with: .move(edge: .top)))
         }
     }
 
