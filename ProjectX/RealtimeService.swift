@@ -227,6 +227,14 @@ class RealtimeService {
                 } else {
                     self.liveAccounts.append(account)
                 }
+                // Keep ProjectXService in sync so dashboard cards reflect realtime balance
+                let svc = ProjectXService.shared
+                if let idx = svc.accounts.firstIndex(where: { $0.id == account.id }) {
+                    svc.accounts[idx] = account
+                }
+                if svc.activeAccount?.id == account.id {
+                    svc.activeAccount = account
+                }
                 NetworkLogger.shared.log(NetworkLogger.Entry(
                     timestamp: Date(), source: .signalR, method: "GatewayUserAccount",
                     path: "UserHub", statusCode: nil, duration: nil,

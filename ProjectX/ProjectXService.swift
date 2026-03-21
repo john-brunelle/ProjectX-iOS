@@ -100,7 +100,9 @@ class ProjectXService {
             return
         }
         accounts = response.accounts ?? []
-        if activeAccount == nil {
+        if let currentId = activeAccount?.id {
+            activeAccount = accounts.first(where: { $0.id == currentId })
+        } else {
             let savedId = UserDefaults.standard.integer(forKey: kActiveAccountId)
             activeAccount = accounts.first(where: { $0.id == savedId }) ?? accounts.first
         }

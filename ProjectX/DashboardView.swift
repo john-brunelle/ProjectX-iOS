@@ -44,12 +44,15 @@ struct DashboardView: View {
             NetworkActivityView()
                 .tabItem { Label("Network",    systemImage: "network") }
                 .tag(9)
+            AISettingsView()
+                .tabItem { Label("AI", systemImage: "brain.head.profile") }
+                .tag(10)
             ControlsView()
                 .tabItem { Label("Controls", systemImage: "slider.horizontal.3") }
-                .tag(10)
+                .tag(11)
             PreferencesView()
                 .tabItem { Label("Preferences", systemImage: "gearshape.fill") }
-                .tag(11)
+                .tag(12)
         }
         .environment(service)
         .environment(realtime)

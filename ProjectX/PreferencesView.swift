@@ -97,14 +97,24 @@ struct ControlsView: View {
                     Text("When enabled, stopping a bot will automatically close any open positions and/or cancel pending orders on that contract.")
                 }
 
-                // ── Claude AI ──────────────────────────
-                ClaudeAISettingsSection()
-
             }
             .navigationTitle("Controls")
         }
     }
 
+}
+
+// ── AI Settings Tab ──────────────────────────
+
+struct AISettingsView: View {
+    var body: some View {
+        NavigationStack {
+            List {
+                ClaudeAISettingsSection()
+            }
+            .navigationTitle("AI")
+        }
+    }
 }
 
 // ── Claude AI Settings Section ────────────────
