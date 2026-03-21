@@ -162,7 +162,17 @@ struct BotDetailView: View {
             }
             .sheet(isPresented: $showBacktestCharts) {
                 if let result = backtestResult {
-                    BacktestChartsView(result: result, botName: bot.name, tradeDirection: tradeDirection)
+                    BacktestChartsView(
+                        result: result,
+                        botName: bot.name,
+                        tradeDirection: tradeDirection,
+                        onOptimizeHours: { mode, start, end, sleepWindows in
+                            operatingMode = mode
+                            opStartTime = start
+                            opEndTime = end
+                            editSleepWindows = sleepWindows
+                        }
+                    )
                 }
             }
             .confirmationDialog(resetPnLDialogTitle, isPresented: $showResetPnLConfirmation) {

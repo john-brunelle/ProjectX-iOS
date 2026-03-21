@@ -13,6 +13,7 @@ struct BacktestChartsView: View {
     let result: BacktestResult
     var botName: String = ""
     var tradeDirection: TradeDirectionFilter = .both
+    var onOptimizeHours: ((String, Date, Date, [SleepWindow]) -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -615,6 +616,26 @@ struct BacktestChartsView: View {
             }
             .frame(height: 220)
             .padding(.bottom, 8)
+
+                // Optimize button
+                if onOptimizeHours != nil {
+                    Button {
+                        let opt = optimizeOperatingHours()
+                        let cal = Calendar.current
+                        let start = cal.date(from: DateComponents(hour: opt.startHour, minute: 0)) ?? Date()
+                        let end = cal.date(from: DateComponents(hour: opt.endHour, minute: 0)) ?? Date()
+                        onOptimizeHours?("custom", start, end, opt.sleepWindows)
+                        dismiss()
+                    } label: {
+                        HStack {
+                            Image(systemName: "wand.and.stars")
+                            Text("Optimize Operating Hours")
+                        }
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.blue)
+                    }
+                    .buttonStyle(.plain)
+                }
             }
         }
     }
@@ -673,6 +694,78 @@ struct BacktestChartsView: View {
         let h = hour % 12 == 0 ? 12 : hour % 12
         let suffix = hour < 12 ? "a" : "p"
         return "\(h)\(suffix)"
+    }
+
+    // MARK: - Operating Hours Optimizer
+
+    private struct OptimizedHours {
+        let startHour: Int
+        let endHour: Int
+        let sleepWindows: [SleepWindow]
+    }
+
+    private func optimizeOperatingHours() -> OptimizedHours {
+        // Build raw per-hour P&L (individual hours, no bucketing)
+        var hourPnL = [Double](repeating: 0, count: 24)
+        var hourHasData = [Bool](repeating: false, count: 24)
+        let calendar = Calendar.current
+        for trade in result.trades {
+            if let date = BacktestEngine.parseTimestamp(trade.entryTimestamp) {
+                let hour = calendar.component(.hour, from: date)
+                hourPnL[hour] += trade.pnlDollars
+                hourHasData[hour] = true
+            }
+        }
+
+        // Find the best contiguous window (max cumulative P&L)
+        // Try all start/end combinations of hours that have data
+        var bestStart = 0
+        var bestEnd = 24
+        var bestPnL = -Double.infinity
+
+        let activeHours = (0..<24).filter { hourHasData[$0] }
+        guard !activeHours.isEmpty else {
+            return OptimizedHours(startHour: 0, endHour: 24, sleepWindows: [])
+        }
+
+        for startIdx in 0..<activeHours.count {
+            var cumPnL = 0.0
+            for endIdx in startIdx..<activeHours.count {
+                let h = activeHours[endIdx]
+                cumPnL += hourPnL[h]
+                if cumPnL > bestPnL {
+                    bestPnL = cumPnL
+                    bestStart = activeHours[startIdx]
+                    bestEnd = activeHours[endIdx] + 1 // end is exclusive
+                }
+            }
+        }
+
+        // Find sleep windows: consecutive losing hours within the operating window
+        var sleepWindows: [SleepWindow] = []
+        var sleepIdx = 1
+        var h = bestStart
+        while h < bestEnd {
+            if hourPnL[h] < 0 {
+                let sleepStart = h
+                while h < bestEnd && hourPnL[h] < 0 {
+                    h += 1
+                }
+                sleepWindows.append(SleepWindow(
+                    name: "Optimized \(sleepIdx)",
+                    startHour: sleepStart,
+                    startMinute: 0,
+                    endHour: h,
+                    endMinute: 0,
+                    closePosition: true
+                ))
+                sleepIdx += 1
+            } else {
+                h += 1
+            }
+        }
+
+        return OptimizedHours(startHour: bestStart, endHour: bestEnd % 24, sleepWindows: sleepWindows)
     }
 
     // MARK: - 8. Rolling Win Rate
